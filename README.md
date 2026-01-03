@@ -171,11 +171,13 @@ curl --request POST \
 ```
 
 ### Step 4: Secure Funding (Payment Methods)
-You must secure the source of funds (e.g., a Debit Card).
+You must secure the source of funds. You can choose between **Debit Card** or **US Bank Account (ACH)**.
 
+#### Option A: Debit Card (Instant)
 1.  **Tokenization**: The frontend sends the raw card details to a Tokenizer to get a secure `token`.
 2.  **Registration**: Send this token to the API to create a **Funding Account**.
-*   **Endpoint**: `POST .../participants/{senderId}/fundingAccounts`
+
+> **Note on 3D Secure**: Some cards may require additional authentication. See [3DS Challenge Procedure](#3ds-challenge-procedure) for details.
 
 ```bash
 curl --request POST \
@@ -198,6 +200,31 @@ curl --request POST \
       "line1": "123 Market St",
       "zipcode": "94105"
     }
+  }
+}'
+```
+
+#### Option B: US Bank Account (ACH)
+For ACH, you provide the routing and account number directly (secured by SSL in production).
+
+```bash
+curl --request POST \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
+  --header 'Content-Type: application/json' \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY" \
+  --data '{
+  "externalId": "'$(uuidgen)'",
+  "asset": "USD",
+  "nickname": "My Checking",
+  "paymentMethod": {
+    "type": "ACH",
+    "countryCode": "US",
+    "bankCode": "US_ACH",
+    "routingNumber": "123456789",
+    "accountNumber": "000123456789",
+    "accountType": "CHECKING"
   }
 }'
 ```
