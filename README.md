@@ -121,6 +121,13 @@ A beneficiary is simply another "Person" entity, but created with the intent of 
     *   **Account Schema Endpoint**: `GET .../payout/recipientAccounts/schema/{countryCode}`
 
 ```bash
+# Fetch Person Schema for Peru (PE)
+curl --request GET \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/recipients/schema/pe \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY"
+
 # Fetch Account Schema for Peru (PE)
 curl --request GET \
   --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/recipientAccounts/schema/pe \
@@ -356,6 +363,35 @@ curl --request POST \
 
 ---
 
+### Step 9: Register Webhooks
+To receive real-time notifications about important lifecycle events (e.g., a transaction status update from `PENDING` to `COMPLETED`), you must register a callback URL.
+
+**Supported Events**:
+*   `transactionStatusChanged`
+*   `agentUpdatedEvents`
+*   `documentUpdatedEvents`
+
+*   **Endpoint**: `POST .../webhooks`
+
+```bash
+curl --request POST \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/webhooks \
+  --header 'Content-Type: application/json' \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY" \
+  --data '{
+  "events": [
+    "transactionStatusChanged",
+    "documentUpdatedEvents",
+    "agentUpdatedEvents"
+  ],
+  "url": "https://your-server.com/api/webhooks"
+}'
+```
+
+---
+
 ## 4. Database & Security
 
 ### Database Schema (SQLite)
@@ -366,6 +402,9 @@ The application maintains a local mapping of IDs.
 | `users` | Local Auth (Email/Password). |
 | `profiles` | Maps `userId` -> Inyo `externalId` (Sender ID). |
 | `beneficiaries` | Maps local recipients -> Inyo `externalId` (Recipient ID). |
+| `beneficiary_accounts` | Maps recipient bank accounts -> Inyo `externalId` (Account ID). |
+| `quotes` | Stores active quotes and exchange rates for users. |
+| `payment_methods` | Stores funding sources (Cards, ACH) and tokens. |
 | `transactions` | Stores history and status. |
 
 ### Security Implementation
