@@ -54,7 +54,7 @@ npm run dev:full
 
 ---
 
-## 3. The "Golden Path" (Step-by-Step Implementation)
+## 3. Step-by-Step Implementation
 
 This section details the exact lifecycle of a transaction. For each step, we provide the **Context**, the **API Endpoint**, and a **Sample cURL** command so you can test it independently.
 
