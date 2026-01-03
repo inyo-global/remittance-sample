@@ -172,7 +172,7 @@ const Receipt = ({ user }) => {
                     <button onClick={() => window.print()} className="font-bold text-gray-700 hover:text-black flex items-center gap-2 text-sm">
                         <span>🖨</span> Print Receipt
                     </button>
-                    <button onClick={() => navigate('/dashboard')} className="bg-black text-white px-6 py-3 rounded hover:bg-gray-800 transition-all font-bold uppercase tracking-wide text-sm">
+                    <button onClick={() => navigate('/dashboard')} className="text-white px-6 py-3 rounded hover:opacity-90 transition-all font-bold uppercase tracking-wide text-sm" style={{ background: 'var(--color-success)' }}>
                         New Transfer
                     </button>
                 </div>

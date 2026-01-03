@@ -449,7 +449,7 @@ db.prepare(`CREATE TABLE IF NOT EXISTS payment_methods (
 )`).run();
 
 
-app.post('/api/payment-methods', authenticateToken, async (req, res) => {
+app.post('/api/payment-methods/cards', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { token, billingAddress } = req.body; // token is the object from tokenizer
   const id = uuidv4();
@@ -463,6 +463,7 @@ app.post('/api/payment-methods', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'User profile or external ID missing. Please complete profile first.' });
     }
 
+    // 2. Construct External API Payload
     // 2. Construct External API Payload
     // Tokenizer returns dtCreated like "2025-12-31 21:51:51", API wants ISO8601 (yyyy-MM-dd'T'HH:mm:ss.SSS'Z)
     const formatTime = (t) => {
@@ -499,14 +500,11 @@ app.post('/api/payment-methods', authenticateToken, async (req, res) => {
     };
 
 
-
     // 3. Call External API
     const url = `${API_BASE_URL}/organizations/${TENANT}/payout/participants/${profile.externalId}/fundingAccounts`;
 
     console.log(url);
     console.log("Payload:", payload);
-
-
 
     const apiRes = await axios.post(url, payload, { headers: API_HEADERS });
 
@@ -516,18 +514,79 @@ app.post('/api/payment-methods', authenticateToken, async (req, res) => {
       throw new Error(`API Error: Received status ${apiRes.status}`);
     }
 
-    const { id: externalId } = apiRes.data;
+    const responseData = apiRes.data;
+    const { status, redirectAcsUrl, statusMessage } = responseData;
+
+    if (status === 'Declined') {
+      return res.status(400).json({
+        success: false,
+        error: statusMessage || 'Card was declined',
+        status
+      });
+    }
+
+    const { id: externalId } = responseData;
 
     // 4. Save to Database
     const tokenStr = typeof token === 'object' ? JSON.stringify(token) : token;
 
     db.prepare('INSERT INTO payment_methods (id, userId, token, data, type, externalId) VALUES (?, ?, ?, ?, ?, ?)').run(
-      id, userId, tokenStr, JSON.stringify({ billingAddress, apiResponse: apiRes.data }), 'CARD', externalId
+      id, userId, tokenStr, JSON.stringify({ billingAddress, apiResponse: responseData }), 'CARD', externalId
+    );
+
+    res.json({ success: true, id, externalId, status, redirectAcsUrl });
+  } catch (error) {
+    console.error('Payment Method Error:', error.message, error.response?.data);
+    res.status(500).json({ error: error.response?.data || error.message });
+  }
+});
+
+app.post('/api/payment-methods/ach', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { bankData, billingAddress } = req.body;
+  const id = uuidv4();
+
+  try {
+    const profile = db.prepare('SELECT * FROM profiles WHERE userId = ?').get(userId);
+    if (!profile || !profile.externalId) {
+      return res.status(400).json({ error: 'User profile or external ID missing.' });
+    }
+
+    const payload = {
+      externalId: id,
+      asset: 'USD',
+      nickname: bankData.nickname || `My ${bankData.bankName || 'Bank'} Account`,
+      paymentMethod: {
+        type: 'ACH',
+        countryCode: 'US',
+        bankCode: 'US_ACH',
+        routingNumber: bankData.routingNumber,
+        accountNumber: bankData.accountNumber,
+        accountType: bankData.accountType // CHECKING or SAVINGS
+      }
+    };
+
+    const url = `${API_BASE_URL}/organizations/${TENANT}/payout/participants/${profile.externalId}/fundingAccounts`;
+    console.log(`Creating ACH: ${url}`);
+    const apiRes = await axios.post(url, payload, { headers: API_HEADERS });
+
+    if (apiRes.status !== 201) {
+      throw new Error(`API Error: Received status ${apiRes.status}`);
+    }
+
+    const { id: externalId } = apiRes.data;
+
+    // Mask account number for security
+    const masked = { ...bankData, accountNumber: `****${bankData.accountNumber.slice(-4)}` };
+    const tokenStr = JSON.stringify(masked);
+
+    db.prepare('INSERT INTO payment_methods (id, userId, token, data, type, externalId) VALUES (?, ?, ?, ?, ?, ?)').run(
+      id, userId, tokenStr, JSON.stringify({ billingAddress, apiResponse: apiRes.data }), 'ACH', externalId
     );
 
     res.json({ success: true, id, externalId });
   } catch (error) {
-    console.error('Payment Method Error:', error.message, error.response?.data);
+    console.error('ACH Payment Method Error:', error.message, error.response?.data);
     res.status(500).json({ error: error.response?.data || error.message });
   }
 });
@@ -541,9 +600,43 @@ app.get('/api/payment-methods', authenticateToken, (req, res) => {
       ...r,
       token: JSON.parse(r.token),
       data: JSON.parse(r.data)
-    }));
+    })).filter(pm => {
+      // Filter out ActionRequired cards unless confirmed
+      const status = pm.data?.apiResponse?.status;
+      return status !== 'ActionRequired' && status !== 'Challenge';
+    });
     res.json(paymentMethods);
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/payment-methods/:id/sync', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { id } = req.params;
+
+  try {
+    const card = db.prepare('SELECT * FROM payment_methods WHERE id = ? AND userId = ?').get(id, userId);
+    if (!card) return res.status(404).json({ error: 'Payment method not found' });
+
+    const currentData = JSON.parse(card.data);
+    const profile = db.prepare('SELECT externalId FROM profiles WHERE userId = ?').get(userId);
+
+    if (!profile || !profile.externalId) {
+      return res.status(400).json({ error: 'Profile not found' });
+    }
+
+    const url = `${API_BASE_URL}/organizations/${TENANT}/payout/fundingAccounts/${card.externalId}`;
+    console.log(`Syncing card status: ${url}`);
+
+    const apiRes = await axios.get(url, { headers: API_HEADERS });
+    const newData = { ...currentData, apiResponse: apiRes.data };
+
+    db.prepare('UPDATE payment_methods SET data = ? WHERE id = ?').run(JSON.stringify(newData), id);
+
+    res.json({ success: true, status: apiRes.data.status, data: apiRes.data });
+  } catch (error) {
+    console.error("Sync Error:", error.message);
     res.status(500).json({ error: error.message });
   }
 });

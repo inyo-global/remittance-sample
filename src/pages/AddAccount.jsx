@@ -168,9 +168,20 @@ const AddAccount = ({ user }) => {
 
     return (
         <div className="add-account-page fade-in">
-            <div className="header-section mb-6">
-                <h1 className="text-secondary text-3xl font-light mb-2">Delivery Options</h1>
-                <p className="text-gray-400">Select a bank account or add a new one.</p>
+            <div className="header-section mb-6 flex justify-between items-center">
+                <div>
+                    <h1 className="text-secondary text-3xl font-light mb-2">Delivery Options</h1>
+                    <p className="text-gray-400">Select a bank account or add a new one.</p>
+                </div>
+                {view === 'list' && (
+                    <button
+                        onClick={() => setView('add')}
+                        className="btn rounded-full px-6 py-2 text-sm font-bold flex items-center gap-2 transition-all hover:shadow-md"
+                        style={{ backgroundColor: '#f3f4f6', color: 'var(--color-primary)' }}
+                    >
+                        <span className="text-xl">+</span> Add New
+                    </button>
+                )}
             </div>
 
             {loading ? <div className="loader"></div> : (
@@ -207,13 +218,6 @@ const AddAccount = ({ user }) => {
                                 <span className="text-primary font-bold">Select ›</span>
                             </div>
                         ))}
-
-                        <button
-                            onClick={() => setView('add')}
-                            className="w-full py-4 border-2 border-dashed border-gray-300 rounded text-gray-400 font-bold hover:border-primary hover:text-primary transition-all"
-                        >
-                            + Add Another Account
-                        </button>
                     </div>
                 ) : (
                     <div className="add-form">
