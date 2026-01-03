@@ -27,6 +27,12 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 ### Environment Variables (.env)
 You must configure your credentials to authenticate with the sandbox environment.
 
+### Rate Limiting & Caching (Best Practice)
+The Inyo API enforces strict rate limits. To ensure robustness, you should implement caching for static or semi-static data.
+*   **Destinations & Banks**: Cache these responses for **24 hours**. They rarely change.
+*   **Compliance Limits**: Cache `GET /limits` references for **24 hours** or until a transaction occurs.
+*   **Quotes**: Do *not* cache quotes as they expire quickly.
+
 ```env
 # Server Configuration
 PORT=3001
@@ -106,14 +112,44 @@ curl --request GET \
 ```
 
 ### Step 3: Beneficiary (Recipient) Setup
-A beneficiary is simply another "Person" entity, but created with the intent of receiving funds.
+A beneficiary is simply another "Person" entity, but created with the intent of receiving funds. **Crucially, the data requirements vary by country.**
 
-*   **Action 1**: Create the Person (Same as Step 1, but usually less data required).
-*   **Action 2**: Link a Bank Account to this Person.
-*   **Endpoint**: `POST .../participants/{recipientId}/recipientAccounts/gateway`
+*   **Action 1: Dynamic Data Collection (Schemas)**
+    *   Before asking the user for details, you **must fetch the specific schemas** for the destination country (e.g., 'MX', 'IN', 'US').
+    *   These schemas define exactly which fields (e.g., 'CLABE' for Mexico vs 'IFSC' for India) are mandatory.
+    *   **Person Schema Endpoint**: `GET .../payout/recipients/schema/{countryCode}`
+    *   **Account Schema Endpoint**: `GET .../payout/recipientAccounts/schema/{countryCode}`
 
 ```bash
-# Link a US Bank Account to the Beneficiary
+# Fetch Account Schema for Peru (PE)
+curl --request GET \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/recipientAccounts/schema/pe \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY"
+```
+
+*   **Action 2: Fetch Bank List (for Dropdowns)**
+    *   If the Account Schema includes a `bankCode` field (common in LATAM/Asia), you should fetch the list of valid banks to populate a dropdown.
+    *   **Bank List Endpoint**: `GET .../payout/{countryCode}/banks`
+
+```bash
+# Fetch List of Banks in Peru
+curl --request GET \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/PE/banks?size=100 \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY"
+```
+
+*   **Action 3**: Create the Person
+    *   Use the fields from the recipient schema to call `POST .../people`.
+
+*   **Action 4**: Link a Bank Account
+    *   Use the fields from the account schema to call `POST .../participants/{recipientId}/recipientAccounts/gateway`.
+
+```bash
+# Link a Peru (PE) Bank Account (Schema-specific fields)
 curl --request POST \
   --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/participants/$RECIPIENT_ID/recipientAccounts/gateway \
   --header 'Content-Type: application/json' \
@@ -121,9 +157,16 @@ curl --request POST \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY" \
   --data '{
-  "accountNumber": "123456789",
-  "routingNumber": "987654321",
-  "type": "CHECKING"
+  "externalId": "12312341",
+  "asset": "PEN",
+  "payoutMethod": {
+    "type": "BANK_DEPOSIT",
+    "countryCode": "PE",
+    "bankCode": "BINPPEPL",
+    "routingNumber": "1234",
+    "accountNumber": "1345",
+    "accountType": "CHECKING"
+  }
 }'
 ```
 
@@ -182,7 +225,38 @@ curl --request POST \
 }'
 ```
 
-### Step 6: Execution (The Transaction)
+### Step 6: Transaction Limits & Trust Levels
+Before executing a transaction, it is crucial to verify that the user has not exceeded their assigned limits.
+
+*   **Trust Levels**: Users are assigned a Trust Level (e.g., **Level 1, 2, or 3**) by the Compliance team. This level is determined by the amount of verification documentation provided (KYC).
+*   **Time Windows**: Limits are calculated across three rolling windows: **24 Hours**, **30 Days**, and **180 Days**.
+*   **Upgrading**: You can query the API to see exactly which fields (e.g., "Occupation", "ID Document") are missing to upgrade to the next level.
+
+> **UI Implementation Reference**: See `src/components/Sidebar.jsx` (Left Menu Widget) and `src/pages/Compliance.jsx` for examples of how to visualize usage and requirements.
+
+**Check Limits & Usage**:
+*   **Endpoint**: `GET .../fx/participants/{id}/limits`
+
+```bash
+curl --request GET \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/fx/participants/$SENDER_ID/limits \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY"
+```
+
+**Check Trust Level & Upgrade Requirements**:
+*   **Endpoint**: `GET .../participants/{id}/complianceLevels`
+
+```bash
+curl --request GET \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY"
+```
+
+### Step 7: Execution (The Transaction)
 Finally, link all the IDs together to execute the payout.
 
 *   **Endpoint**: `POST .../fx/transactions`
@@ -211,6 +285,36 @@ curl --request POST \
     "userIpAddress": "127.0.0.1"
   }
 }'
+```
+
+---
+
+### Step 8: Issuing the Receipt (Regulated)
+**Critical Requirement**: As the agent of a Money Service Business (MSB), you are **legally required** to issue a receipt to the sender immediately after the transaction is submitted. Follow the template provided by Inyo during the contract phase.
+
+*   You **MUST NOT** alter the core financial data returned by the Inyo API.
+*   The receipt must include:
+    1.  **Exchange Rate**: Explicitly showing the locked-in rate.
+    2.  **Fees**: Total fees charged to the customer.
+    3.  **Total Amount**: Full amount paid by the sender.
+    4.  **Receive Amount**: Exact amount to be received by the beneficiary.
+    5.  **Regulatory Disclosures**: The `receipt` object contains dynamic legal text specific to the corridor (e.g., "Right to Refund", "Cancellation Disclosure"). You must display these texts **verbatim**.
+
+**Sample Transaction Response (extract for Receipt)**:
+```json
+{
+  "id": "txn_12345",
+  "status": "PENDING",
+  "receipt": {
+    "contactInfo": "For questions contact Inyo support...",
+    "rightToRefund": "You have a right to dispute errors...",
+    "cancellationDisclosure": "You can cancel for a full refund within 30 minutes..."
+  },
+  "totalAmount": { "amount": 101.00, "currency": "USD" },
+  "fee": { "amount": 1.00, "currency": "USD" },
+  "receivingAmount": { "amount": 1950.00, "currency": "MXN" },
+  "destinationExchangeRate": { "rate": 19.50 }
+}
 ```
 
 ---
