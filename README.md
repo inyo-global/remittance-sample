@@ -205,6 +205,8 @@ curl --request POST \
 ### Step 5: Quoting (Pricing)
 Before sending, you must lock in the exchange rate. The `quoteId` guarantees the rate for a fixed window.
 
+*   **FX Spread**: Your specific FX spread (margin) per corridor is configured by Inyo during the onboarding phase.
+*   **Fees**: A default per-transaction fee is also configured. **Depending on your contract type**, you may be able to override this fee at the quote level (e.g., offering a "Zero Fee" promotion).
 *   **Endpoint**: `POST .../payout/quotes`
 
 ```bash
@@ -259,6 +261,9 @@ curl --request GET \
 ### Step 7: Execution (The Transaction)
 Finally, link all the IDs together to execute the payout.
 
+**Device Fingerprinting (Required)**:
+Inyo provides a client-side device fingerprinting library. This library **MUST** be executed before the transaction call. The output (`requestId` and `visitorId`) must be passed in the `additionalData` object.
+
 *   **Endpoint**: `POST .../fx/transactions`
 *   **Payload References**:
     *   `senderId` (Step 1)
@@ -266,6 +271,7 @@ Finally, link all the IDs together to execute the payout.
     *   `fundingAccountId` (Step 4)
     *   `recipientAccountId` (Step 3 - Account ID)
     *   `quoteId` (Step 5)
+    *   `additionalData` (Fingerprint Results)
 
 ```bash
 curl --request POST \
@@ -283,6 +289,10 @@ curl --request POST \
   "quoteId": "$QUOTE_ID",
   "deviceData": {
     "userIpAddress": "127.0.0.1"
+  },
+  "additionalData": {
+    "fingerprint": "req_12345_from_lib",
+    "visitor": "vis_67890_from_lib"
   }
 }'
 ```
@@ -343,3 +353,37 @@ The application maintains a local mapping of IDs.
 | `403 Compliance` | User is restricted. | Check `GET /complianceLevels` response. Missing ID document? |
 | `400 Missing Data` | Incomplete Profile. | Ensure Profile step is completed and `externalId` is saved. |
 | `429 Too Many Requests` | Rate limiting. | Implement caching (e.g., `node-cache` or Redis) for Limits/Quotes. |
+
+## 6. Testing Data
+
+You can find card data for testing purposes at:
+[https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards](https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards)
+
+> **Important**: To successfully test transactions, it is required to use a combination of cards **with** and **without** 3D Secure (3DS).
+
+### 3DS Challenge Procedure
+For cards enabled with 3DS, the bank requires an additional authentication step known as a "challenge". This procedure is implemented in this demo using a mix of JavaScript, iframes, and server-side validation.
+
+**Technical Implementation:**
+
+1.  **Challenge Trigger**: If the initial tokenization response from the API returns `status: 'ActionRequired'`, the application:
+    *   Saves the card locally with a `Pending` status.
+    *   Displays a full-screen iframe loading the provided `redirectAcsUrl`.
+
+2.  **Frontend Event Listener**:
+    *   The application listens for a `postMessage` event from the iframe.
+    *   It waits specifically for a payload confirming the transaction:
+        ```javascript
+        if (response.status == 'AUTHORIZED' && response.cvcResult == 'APPROVED' && response.avsResult == 'APPROVED')
+        ```
+
+3.  **Server-Side Verification (Sync)**:
+    *   Once the frontend receives the success message, it triggers a backend sync call: `GET /api/payment-methods/:id/sync`.
+    *   The backend performs a server-to-server request to the Gateway API (`GET .../payout/fundingAccounts/{externalId}`) to confirm the status is officially `Verified`.
+    *   Only upon this upstream confirmation is the local database updated, unlocking the card for use.
+
+### Additional Resources
+For more details on handling AVS, CVC, and 3D Secure Verification, please refer to the official documentation:
+
+*   [Handling AVS & CVC Results](https://dev.inyoglobal.com/api-references/payments-gateway/apis/payment/pulling-funds/cards/authorizing/handling-avs-cvc)
+*   [Handling 3D Secure (3DS)](https://dev.inyoglobal.com/api-references/payments-gateway/apis/payment/pulling-funds/cards/authorizing/handling-3d-secure)

@@ -44,9 +44,7 @@ const PaymentMethods = ({ user }) => {
                             <div className="text-muted">
                                 {method.token.schemeId} **** {method.token.lastFourDigits}
                             </div>
-                            <small className="text-muted d-block mt-2">
-                                Expires: {method.token.dtExpiration}
-                            </small>
+
                             <div className="mt-3">
                                 <span className="text-sm text-gray">Status: {method.data.apiResponse?.status || 'Active'}</span>
                             </div>

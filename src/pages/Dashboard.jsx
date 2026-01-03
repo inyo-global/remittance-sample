@@ -111,8 +111,8 @@ const Dashboard = ({ user }) => {
                     </select>
                 </div>
 
-                <div className="amount-inputs flex items-end gap-4 mb-4">
-                    <div className="input-wrap flex-1 relative">
+                <div className="amount-inputs flex flex-col md:flex-row md:items-end gap-4 mb-4">
+                    <div className="input-wrap w-full md:flex-1 relative">
                         <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">YOU SEND</label>
                         <div className="relative">
                             <input
@@ -126,18 +126,18 @@ const Dashboard = ({ user }) => {
                         </div>
                     </div>
 
-                    <div className="mb-1">
+                    <div className="mb-1 w-full md:w-auto">
                         <button
                             onClick={handleGetQuote}
                             disabled={loading || !amount}
-                            className={`btn px-6 py-4 rounded font-bold transition-all ${loading || !amount ? 'bg-gray-200 text-gray-400' : 'bg-primary text-white hover:bg-primary-dark'}`}
+                            className={`btn w-full md:w-auto px-6 py-4 rounded font-bold transition-all ${loading || !amount ? 'bg-gray-200 text-gray-400' : 'bg-primary text-white hover:bg-primary-dark'}`}
                             style={{ height: '58px' }} // Match input height roughly
                         >
                             {loading ? '...' : 'Quote'}
                         </button>
                     </div>
 
-                    <div className="input-wrap flex-1 relative">
+                    <div className="input-wrap w-full md:flex-1 relative">
                         <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">THEY RECEIVE</label>
                         <div className="relative">
                             <input

@@ -72,9 +72,16 @@ const ReviewTransaction = ({ user }) => {
                     <div>
                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">PAYMENT METHOD</span>
                         <div className="flex items-center gap-2">
-                            <span>💳</span>
-                            <span className="text-gray-700 font-bold capitalize">{paymentMethod?.token?.schemeId || 'Card'}</span>
-                            <span className="text-gray-500 text-sm">•••• {paymentMethod?.token?.lastFourDigits}</span>
+                            <span>{paymentMethod?.type === 'ACH' ? '🏦' : '💳'}</span>
+                            <span className="text-gray-700 font-bold capitalize">
+                                {paymentMethod?.type === 'ACH' ? (paymentMethod?.nickname || 'Bank Account') : (paymentMethod?.token?.schemeId || 'Card')}
+                            </span>
+                            <span className="text-gray-500 text-sm">
+                                {paymentMethod?.type === 'ACH'
+                                    ? `•••• ${paymentMethod?.token?.accountNumber ? paymentMethod.token.accountNumber.slice(-4) : ''}`
+                                    : `•••• ${paymentMethod?.token?.lastFourDigits || ''}`
+                                }
+                            </span>
                         </div>
                     </div>
                     <button className="text-primary text-sm font-bold" onClick={() => navigate('/payment')}>Edit</button>
