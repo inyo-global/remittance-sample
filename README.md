@@ -111,7 +111,51 @@ curl --request GET \
   --header "x-agent-api-key: $AGENT_KEY"
 ```
 
-### Step 3: Beneficiary (Recipient) Setup
+### Step 3: Verify Available Destinations
+Before selecting a country, you should verify which destinations are currently supported and their specific requirements/currencies.
+
+*   **Endpoint**: `GET .../payout/{sourceCountry}/destinations`
+
+```bash
+# Fetch available destinations from US
+curl --request GET \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/us/destinations \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY"
+```
+
+### Step 4: Quoting (Pricing)
+Before sending, you must lock in the exchange rate. The `quoteId` guarantees the rate for a fixed window.
+
+*   **FX Spread**: Your specific FX spread (margin) per corridor is configured by Inyo during the onboarding phase.
+*   **Fees**: A default per-transaction fee is also configured. **Depending on your contract type**, you may be able to override this fee at the quote level (e.g., offering a "Zero Fee" promotion).
+*   **Endpoint**: `POST .../payout/quotes`
+*   **Amount Type**: `GROSS` or `NET` 
+    *   **NET**: If fee is 4 dollars and transaction is 100, consumer will be charged 104 dollars and 100 dollars will be converted to the target currency.
+    *   **GROSS**: If fee is 4 dollars and transaction is 100, consumer will be charged 100 dollars and 96 dollars will be converted to the target currency.
+
+
+```bash
+curl --request POST \
+  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/quotes \
+  --header 'Content-Type: application/json' \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY" \
+  --data '{
+  "fromCurrency": "USD",
+  "toCurrency": "MXN",
+  "amount": 100.00,
+  "fee": {
+    "amount": 1.00,
+    "currency": "USD"
+  },
+  "amountType": "GROSS|NET"
+}'
+```
+
+### Step 5: Beneficiary (Recipient) Setup
 A beneficiary is simply another "Person" entity, but created with the intent of receiving funds. **Crucially, the data requirements vary by country.**
 
 *   **Action 1: Dynamic Data Collection (Schemas)**
@@ -136,7 +180,12 @@ curl --request GET \
   --header "x-agent-api-key: $AGENT_KEY"
 ```
 
-*   **Action 2: Fetch Bank List (for Dropdowns)**
+*   **Action 3: Create the Person**
+    *   Use the fields from the recipient schema to call `POST .../people`.
+
+### Step 6: Beneficiary Account (Funding)
+
+*   **Action 1: Fetch Bank List (for Dropdowns)**
     *   If the Account Schema includes a `bankCode` field (common in LATAM/Asia), you should fetch the list of valid banks to populate a dropdown.
     *   **Bank List Endpoint**: `GET .../payout/{countryCode}/banks`
 
@@ -149,10 +198,7 @@ curl --request GET \
   --header "x-agent-api-key: $AGENT_KEY"
 ```
 
-*   **Action 3**: Create the Person
-    *   Use the fields from the recipient schema to call `POST .../people`.
-
-*   **Action 4**: Link a Bank Account
+*   **Action 2: Link a Bank Account**
     *   Use the fields from the account schema to call `POST .../participants/{recipientId}/recipientAccounts/gateway`.
 
 ```bash
@@ -177,7 +223,7 @@ curl --request POST \
 }'
 ```
 
-### Step 4: Secure Funding (Payment Methods)
+### Step 7: Secure Funding (Payment Methods)
 You must secure the source of funds. You can choose between **Debit Card** or **US Bank Account (ACH)**.
 
 #### Option A: Debit Card (Instant)
@@ -236,37 +282,7 @@ curl --request POST \
 }'
 ```
 
-### Step 5: Quoting (Pricing)
-Before sending, you must lock in the exchange rate. The `quoteId` guarantees the rate for a fixed window.
-
-*   **FX Spread**: Your specific FX spread (margin) per corridor is configured by Inyo during the onboarding phase.
-*   **Fees**: A default per-transaction fee is also configured. **Depending on your contract type**, you may be able to override this fee at the quote level (e.g., offering a "Zero Fee" promotion).
-*   **Endpoint**: `POST .../payout/quotes`
-*   **Amount Type**: `GROSS` or `NET` 
-    *   **NET**: If fee is 4 dollars and transaction is 100, consumer will be charged 104 dollars and 100 dollars will be converted to the target currency.
-    *   **GROSS**: If fee is 4 dollars and transaction is 100, consumer will be charged 100 dollars and 96 dollars will be converted to the target currency.
-
-
-```bash
-curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/quotes \
-  --header 'Content-Type: application/json' \
-  --header "x-api-key: $API_KEY" \
-  --header "x-agent-id: $AGENT_ID" \
-  --header "x-agent-api-key: $AGENT_KEY" \
-  --data '{
-  "fromCurrency": "USD",
-  "toCurrency": "MXN",
-  "amount": 100.00,
-  "fee": {
-    "amount": 1.00,
-    "currency": "USD"
-  },
-  "amountType": "GROSS|NET"
-}'
-```
-
-### Step 6: Transaction Limits & Trust Levels
+### Step 8: Transaction Limits & Trust Levels
 Before executing a transaction, it is crucial to verify that the user has not exceeded their assigned limits.
 
 *   **Trust Levels**: Users are assigned a Trust Level (e.g., **Level 1, 2, or 3**) by the Compliance team. This level is determined by the amount of verification documentation provided (KYC).
@@ -297,7 +313,7 @@ curl --request GET \
   --header "x-agent-api-key: $AGENT_KEY"
 ```
 
-### Step 7: Execution (The Transaction)
+### Step 9: Execution (The Transaction)
 Finally, link all the IDs together to execute the payout.
 
 **Device Fingerprinting (Required)**:
@@ -338,7 +354,7 @@ curl --request POST \
 
 ---
 
-### Step 8: Issuing the Receipt (Regulated)
+### Step 10: Issuing the Receipt (Regulated)
 **Critical Requirement**: As the agent of a Money Service Business (MSB), you are **legally required** to issue a receipt to the sender immediately after the transaction is submitted. Follow the template provided by Inyo during the contract phase.
 
 *   You **MUST NOT** alter the core financial data returned by the Inyo API.
@@ -368,7 +384,7 @@ curl --request POST \
 
 ---
 
-### Step 9: Register Webhooks
+### Step 11: Register Webhooks
 To receive real-time notifications about important lifecycle events (e.g., a transaction status update from `PENDING` to `COMPLETED`), you must register a callback URL.
 
 **Supported Events**:
