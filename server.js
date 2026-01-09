@@ -413,11 +413,30 @@ db.prepare(`CREATE TABLE IF NOT EXISTS quotes (
 
 app.post('/api/quotes', authenticateToken, async (req, res) => {
   const userId = req.user.id;
-  const { fromCurrency, toCurrency, amount } = req.body;
+  const { fromCurrency, toCurrency, amount, amountType } = req.body;
   try {
-    const apiRes = await axios.post(`${API_BASE_URL}/organizations/${TENANT}/payout/quotes`, {
-      fromCurrency, toCurrency, amount: parseFloat(amount), fee: { amount: 1, currency: 'USD' }
-    }, { headers: API_HEADERS });
+    const payload = {
+      fromCurrency,
+      toCurrency,
+      amount: parseFloat(amount),
+      fee: { amount: 4, currency: 'USD' }
+    };
+    /*
+    Defines the calculation strategy for the provided amount:
+    - NET: The amount is treated as the value to be converted. All fees and taxes will be added on top of this amount (Total Cost = amount + fees).
+    - GROSS: The amount is treated as the total budget (total cost). Fees and taxes will be subtracted from this amount before conversion (Source Amount = amount - fees).
+
+      If not provided, the system defaults to NET.
+
+      ex:
+      "amountType": "GROSS"
+    */
+
+    if (amountType) {
+      payload.amountType = amountType;
+    }
+
+    const apiRes = await axios.post(`${API_BASE_URL}/organizations/${TENANT}/payout/quotes`, payload, { headers: API_HEADERS });
 
     if (apiRes.status !== 200) {
       throw new Error(`API Error: Received status ${apiRes.status}`);

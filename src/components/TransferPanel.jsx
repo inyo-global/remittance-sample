@@ -3,12 +3,12 @@ import React, { useContext } from 'react';
 // Simple text-based implementation for now, mirroring the layout
 const TransferPanel = ({ quote }) => {
     // defaults
-    const exchangeRate = quote?.effectiveRate || '1 USD'; // Simplified demo data
+    const exchangeRate = quote?.effectiveRate ? `1 USD = ${quote.effectiveRate} ${quote.destinationAmount?.currency || 'PEN'}` : '1 USD';
     const sendingAmount = quote?.sourceAmount?.amount || '0.00';
     const sendingCurrency = quote?.sourceAmount?.currency || 'USD';
-    const fee = quote?.totalCost?.amount || '4.99';
-    const feeCurrency = quote?.totalCost?.currency || 'USD';
-    const total = parseFloat(sendingAmount) + parseFloat(fee);
+    const fee = quote?.fee?.amount || '4.99';
+    const feeCurrency = quote?.fee?.currency || 'USD';
+    const total = quote?.totalCost?.amount || '0.00';
     const beneficiaryReceives = quote?.destinationAmount?.amount || '0.00';
     const beneficiaryCurrency = quote?.destinationAmount?.currency || 'USD';
 
@@ -36,7 +36,7 @@ const TransferPanel = ({ quote }) => {
                 </div>
                 <div className="summary-row">
                     <span className="label">YOUR TOTAL</span>
-                    <span className="value text-success">{total.toFixed(2)} {sendingCurrency}</span>
+                    <span className="value text-success">{total} {sendingCurrency}</span>
                 </div>
                 <div className="summary-row">
                     <span className="label">BENEFICIARY RECEIVES</span>

@@ -13,6 +13,7 @@ const Dashboard = ({ user }) => {
     const [countryCode, setCountryCode] = useState('');
     const [loading, setLoading] = useState(false);
     const [loadingDest, setLoadingDest] = useState(true);
+    const [amountType, setAmountType] = useState('NET');
 
     // Initial load
     useEffect(() => {
@@ -37,7 +38,7 @@ const Dashboard = ({ user }) => {
     // Reset quote when inputs change
     useEffect(() => {
         setTransactionData(prev => ({ ...prev, quote: null }));
-    }, [amount, currency, setTransactionData]);
+    }, [amount, currency, amountType, setTransactionData]);
 
     const handleGetQuote = async () => {
         if (!amount || !currency) return;
@@ -48,7 +49,8 @@ const Dashboard = ({ user }) => {
                 userId: user.id || user.userId,
                 fromCurrency: 'USD',
                 toCurrency: currency,
-                amount
+                amount,
+                amountType
             });
             const quote = res.quotes ? res.quotes[0] : (res.id ? res : null);
             if (quote) {
@@ -77,9 +79,7 @@ const Dashboard = ({ user }) => {
         if (dest) setCurrency(dest.currency || dest.code);
     }
 
-    const quoteValue = transactionData?.quote ?
-        (transactionData.quote.mode === 'INVERSE' ? transactionData.quote.sourceAmount.amount : (transactionData.quote.destinationAmount?.amount || transactionData.quote.targetAmount?.amount))
-        : '';
+    const quoteValue = transactionData?.quote?.destinationAmount?.amount || '';
 
     return (
         <div className="dashboard-page fade-in">
@@ -109,6 +109,34 @@ const Dashboard = ({ user }) => {
                             <option key={d.country} value={d.country}>{d.countryName}</option>
                         ))}
                     </select>
+                </div>
+
+                <div className="form-group mb-4">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">FX TYPE</label>
+                    <div className="flex gap-4 p-3 border border-gray-300 rounded bg-white">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="fxType"
+                                value="NET"
+                                checked={amountType === 'NET'}
+                                onChange={e => setAmountType(e.target.value)}
+                                className="w-5 h-5 text-primary"
+                            />
+                            <span className="font-medium">NET</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="fxType"
+                                value="GROSS"
+                                checked={amountType === 'GROSS'}
+                                onChange={e => setAmountType(e.target.value)}
+                                className="w-5 h-5 text-primary"
+                            />
+                            <span className="font-medium">GROSS</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div className="amount-inputs flex flex-col md:flex-row md:items-end gap-4 mb-4">
