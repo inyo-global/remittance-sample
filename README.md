@@ -242,6 +242,10 @@ Before sending, you must lock in the exchange rate. The `quoteId` guarantees the
 *   **FX Spread**: Your specific FX spread (margin) per corridor is configured by Inyo during the onboarding phase.
 *   **Fees**: A default per-transaction fee is also configured. **Depending on your contract type**, you may be able to override this fee at the quote level (e.g., offering a "Zero Fee" promotion).
 *   **Endpoint**: `POST .../payout/quotes`
+*   **Amount Type**: `GROSS` or `NET` 
+    *   **NET**: If fee is 4 dollars and transaction is 100, consumer will be charged 104 dollars and 100 dollars will be converted to the target currency.
+    *   **GROSS**: If fee is 4 dollars and transaction is 100, consumer will be charged 100 dollars and 96 dollars will be converted to the target currency.
+
 
 ```bash
 curl --request POST \
@@ -257,7 +261,8 @@ curl --request POST \
   "fee": {
     "amount": 1.00,
     "currency": "USD"
-  }
+  },
+  "amountType": "GROSS|NET"
 }'
 ```
 
