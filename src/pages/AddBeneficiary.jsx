@@ -19,11 +19,64 @@ const AddBeneficiary = ({ user }) => {
         request('get', `/beneficiaries/schema/${countryCode.toLowerCase()}`)
             .then(res => {
                 setSchema(res);
-                // Initialize defaults if needed
+
+                // Initialize defaults
+                const newDefaults = {};
+                const traverse = (props, parentPath = '') => {
+                    Object.keys(props).forEach(key => {
+                        const prop = props[key];
+                        const path = parentPath ? `${parentPath}.${key}` : key;
+
+                        // Set default if enum has only 1 value
+                        if (prop.enum && prop.enum.length === 1) {
+                            // Helper to set deep value in newDefaults object
+                            // simplified: we'll just use setFormData helper logic or do it flat here?
+                            // Let's build a flat map or use handleNestedChange logic iteratively effectively?
+                            // Better: Construct the object.
+                            assignDeep(newDefaults, path, prop.enum[0]);
+                        }
+                        if (prop.const) {
+                            assignDeep(newDefaults, path, prop.const);
+                        }
+
+                        if (prop.type === 'object' && prop.properties) {
+                            traverse(prop.properties, path);
+                        }
+                        if (prop.type === 'array' && prop.items) {
+                            // Initialize at least 1 item for arrays
+                            // And defaults within that item
+                            const itemPath = `${path}[0]`;
+                            if (prop.items.properties) {
+                                traverse(prop.items.properties, itemPath);
+                            }
+                        }
+                    });
+                };
+
+                if (res.properties) traverse(res.properties);
+                setFormData(prev => ({ ...prev, ...newDefaults }));
             })
             .catch(err => alert('Error loading schema: ' + err.message))
             .finally(() => setLoading(false));
     }, [countryCode]);
+
+    const assignDeep = (obj, path, value) => {
+        const keys = path.split(/\.|\[|\]/).filter(Boolean);
+        let current = obj;
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            if (i === keys.length - 1) {
+                current[key] = value;
+            } else {
+                // If next key is number, array. Else object.
+                const nextKey = keys[i + 1];
+                const isArray = !isNaN(nextKey);
+
+                if (!current[key]) current[key] = isArray ? [] : {};
+                current = current[key];
+            }
+        }
+    };
 
     const handleNestedChange = (path, value) => {
         setFormData(prev => {
@@ -94,6 +147,9 @@ const AddBeneficiary = ({ user }) => {
                 required={isRequired}
                 placeholder={prop.description}
                 options={prop.enum ? prop.enum.map(v => ({ value: v, label: v })) : null}
+                pattern={prop.pattern}
+                minLength={prop.minLength}
+                maxLength={prop.maxLength}
             />
         );
     };
@@ -154,98 +210,9 @@ const AddBeneficiary = ({ user }) => {
 
                 {loading ? <div className="loader"></div> : (
                     <form onSubmit={handleSubmit}>
-                        <div className="grid grid-2-cols gap-6 mb-4">
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">*NAME</label>
-                                <input
-                                    className="w-full p-3 border border-gray-300 rounded text-lg"
-                                    value={formData.firstName || ''}
-                                    onChange={e => handleNestedChange('firstName', e.target.value)}
-                                // defaultValue={state?.beneficiary?.data?.firstName} 
-                                // if editing...
-                                />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">*LAST NAME</label>
-                                <input
-                                    className="w-full p-3 border border-gray-300 rounded text-lg"
-                                    value={formData.lastName || ''}
-                                    onChange={e => handleNestedChange('lastName', e.target.value)}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="mb-4">
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">ADDRESS</label>
-                            <input
-                                className="w-full p-3 border border-gray-300 rounded text-lg"
-                                value={formData.address || ''}
-                                onChange={e => handleNestedChange('address', e.target.value)}
-                            />
-                        </div>
-
-                        <div className="grid grid-2-cols gap-6 mb-4">
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">ADDITIONAL</label>
-                                <input
-                                    className="w-full p-3 border border-gray-300 rounded text-lg"
-                                    value={formData.additional || ''}
-                                    onChange={e => handleNestedChange('additional', e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">MOBILE</label>
-                                <input
-                                    className="w-full p-3 border border-gray-300 rounded text-lg"
-                                    placeholder="Numbers only"
-                                    value={formData.mobile || ''}
-                                    onChange={e => handleNestedChange('mobile', e.target.value)}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-2-cols gap-6 mb-4">
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">*STATE</label>
-                                <div className="relative">
-                                    <select
-                                        className="w-full p-3 border border-gray-300 rounded text-lg appearance-none bg-white"
-                                        value={formData.state || ''}
-                                        onChange={e => handleNestedChange('state', e.target.value)}
-                                    >
-                                        <option>Select an option</option>
-                                        <option value="FL">Florida</option>
-                                        <option value="NY">New York</option>
-                                        {/* Populate dynamically */}
-                                    </select>
-                                    <span className="absolute right-4 top-1/2 transform -translate-y-1/2 text-primary font-bold">▼</span>
-                                </div>
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">*CITY</label>
-                                <div className="relative">
-                                    <select
-                                        className="w-full p-3 border border-gray-300 rounded text-lg appearance-none bg-white"
-                                        value={formData.city || ''}
-                                        onChange={e => handleNestedChange('city', e.target.value)}
-                                    >
-                                        <option>Select a city</option>
-                                        {/* Populate dynamically */}
-                                    </select>
-                                    <span className="absolute right-4 top-1/2 transform -translate-y-1/2 text-primary font-bold">▼</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="mb-8">
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">EMAIL</label>
-                            <input
-                                type="email"
-                                className="w-full p-3 border border-gray-300 rounded text-lg"
-                                value={formData.email || ''}
-                                onChange={e => handleNestedChange('email', e.target.value)}
-                            />
-                        </div>
+                        {schema && schema.properties && Object.keys(schema.properties).map(key =>
+                            renderField(key, schema.properties[key], '', schema.required?.includes(key))
+                        )}
 
                         <div className="flex justify-between" style={{ marginTop: '3rem' }}>
                             <button type="button" onClick={() => navigate(-1)} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
