@@ -687,6 +687,8 @@ app.post('/api/beneficiaries', authenticateToken, async (req, res) => {
       externalId: beneficiaryId // Map local ID to externalId
     };
 
+    console.log('Creating beneficiary:', payload);
+
     const apiRes = await axios.post(`${API_BASE_URL}/organizations/${TENANT}/people`, payload, { headers: API_HEADERS });
 
     if (apiRes.status !== 200) {
@@ -699,7 +701,9 @@ app.post('/api/beneficiaries', authenticateToken, async (req, res) => {
       beneficiaryId, userId, nickname, externalId, JSON.stringify(apiRes.data)
     );
     res.json({ id: beneficiaryId, externalId });
-  } catch (error) {
+  }
+  catch (error) {
+    console.error('Beneficiary creation error:', error);
     res.status(500).json({ error: error.response?.data || error.message });
   }
 });

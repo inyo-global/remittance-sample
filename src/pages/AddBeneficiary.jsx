@@ -80,7 +80,7 @@ const AddBeneficiary = ({ user }) => {
 
     const handleNestedChange = (path, value) => {
         setFormData(prev => {
-            const newState = { ...prev };
+            const newState = JSON.parse(JSON.stringify(prev));
             let current = newState;
             const keys = path.split('.');
             const lastKey = keys.pop();
@@ -182,8 +182,13 @@ const AddBeneficiary = ({ user }) => {
             // Proceed to add Account
             navigate(`/beneficiaries/${res.id}/account`, { state: { ...state, beneficiary: res } });
         } catch (err) {
-            alert('Failed to add beneficiary: ' + (err.response?.data?.error || err.message));
             console.error(err);
+            if (err.errors && Array.isArray(err.errors)) {
+                const msgs = err.errors.map(e => `${e.fieldName.replace(/\[.*?\]|\.\d+/g, '')}: ${e.error}`).join('\n');
+                alert('Validation Failed:\n' + msgs);
+            } else {
+                alert('Failed to add beneficiary: ' + (err.error || err.message));
+            }
         } finally {
             setLoading(false);
         }
@@ -227,11 +232,11 @@ const AddBeneficiary = ({ user }) => {
             </div>
 
             <style>{`
-                .grid-2-cols { grid-template-columns: 1fr 1fr; }
-                .text-secondary { color: #666; } /* Welcome text color from dashboard seems gray actually? "Welcome, Robson" is white in Sidebar, but "Welcome!" in dashboard is green */
-                /* Wait, in Screenshot 2, "Welcome!" text is Green. I styled it Green in Dashboard. */
-                /* In Screenshot 1 (Beneficiary), "Enter Beneficiary" is Gray/Dark Gray. */
-            `}</style>
+            .grid-2-cols { grid-template-columns: 1fr 1fr; }
+            .text-secondary { color: #666; } /* Welcome text color from dashboard seems gray actually? "Welcome, Robson" is white in Sidebar, but "Welcome!" in dashboard is green */
+            /* Wait, in Screenshot 2, "Welcome!" text is Green. I styled it Green in Dashboard. */
+            /* In Screenshot 1 (Beneficiary), "Enter Beneficiary" is Gray/Dark Gray. */
+        `}</style>
         </div>
     );
 };
