@@ -22,12 +22,23 @@ const Beneficiaries = ({ user }) => {
         navigate(`/beneficiaries/${ben.id}/account`);
     };
 
+    const targetCountry = location.state?.countryCode;
+
+    // Filter beneficiaries if a target country is specified
+    const displayedBeneficiaries = targetCountry
+        ? beneficiaries.filter(ben => ben.data?.address?.countryCode === targetCountry)
+        : beneficiaries;
+
     return (
         <div className="beneficiaries-page fade-in">
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-secondary text-3xl font-light mb-2">My Beneficiaries</h1>
-                    <p className="text-gray-400">Select a beneficiary to send money to.</p>
+                    <p className="text-gray-400">
+                        {targetCountry
+                            ? `Showing beneficiaries in ${targetCountry}`
+                            : 'Select a beneficiary to send money to.'}
+                    </p>
                 </div>
                 <button
                     onClick={() => navigate('/beneficiaries/new', { state: location.state })}
@@ -40,12 +51,14 @@ const Beneficiaries = ({ user }) => {
 
             {loading ? <div className="loader"></div> : (
                 <div className="grid grid-cols-1 gap-4">
-                    {beneficiaries.length === 0 ? (
+                    {displayedBeneficiaries.length === 0 ? (
                         <div className="text-center p-8 border rounded text-gray-400">
-                            No beneficiaries found. Add one to get started.
+                            {targetCountry
+                                ? `No beneficiaries found in ${targetCountry}. Add one to get started.`
+                                : 'No beneficiaries found. Add one to get started.'}
                         </div>
                     ) : (
-                        beneficiaries.map(ben => (
+                        displayedBeneficiaries.map(ben => (
                             <div
                                 key={ben.id}
                                 onClick={() => handleSelect(ben)}
