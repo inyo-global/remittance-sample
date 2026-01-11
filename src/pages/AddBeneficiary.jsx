@@ -233,10 +233,8 @@ const AddBeneficiary = ({ user }) => {
 
             <style>{`
             .grid-2-cols { grid-template-columns: 1fr 1fr; }
-            .text-secondary { color: #666; } /* Welcome text color from dashboard seems gray actually? "Welcome, Robson" is white in Sidebar, but "Welcome!" in dashboard is green */
-            /* Wait, in Screenshot 2, "Welcome!" text is Green. I styled it Green in Dashboard. */
-            /* In Screenshot 1 (Beneficiary), "Enter Beneficiary" is Gray/Dark Gray. */
-        `}</style>
+            .text-secondary { color: #666; } 
+            `}</style>
         </div>
     );
 };

@@ -39,7 +39,7 @@ PORT=3001
 JWT_SECRET=local_dev_secret_8923
 
 # Inyo API Credentials (Sandbox)
-EXTERNAL_API_URL=https://api.sandbox.hubcrossborder.com
+EXTERNAL_API_URL=https://api.sandbox.inyoplatform.com
 TENANT=your_tenant_id           # Your Organization ID
 API_KEY=your_api_key            # x-api-key
 AGENT_ID=your_agent_id          # x-agent-id
@@ -68,7 +68,7 @@ Before a user can send money, they must be registered as a **Participant** ("Per
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/people \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/people \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -105,7 +105,7 @@ Once created, you must verify the user's status. If they are "Restricted", you c
 
 ```bash
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -119,7 +119,7 @@ Before selecting a country, you should verify which destinations are currently s
 ```bash
 # Fetch available destinations from US
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/us/destinations \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/us/destinations \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -138,7 +138,7 @@ Before sending, you must lock in the exchange rate. The `quoteId` guarantees the
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/quotes \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/quotes \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -167,14 +167,14 @@ A beneficiary is simply another "Person" entity, but created with the intent of 
 ```bash
 # Fetch Person Schema for Peru (PE)
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/recipients/schema/pe \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/recipients/schema/pe \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
 
 # Fetch Account Schema for Peru (PE)
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/recipientAccounts/schema/pe \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/recipientAccounts/schema/pe \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -192,7 +192,7 @@ curl --request GET \
 ```bash
 # Fetch List of Banks in Peru
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/PE/banks?size=100 \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/PE/banks?size=100 \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -204,7 +204,7 @@ curl --request GET \
 ```bash
 # Link a Peru (PE) Bank Account (Schema-specific fields)
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/participants/$RECIPIENT_ID/recipientAccounts/gateway \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/participants/$RECIPIENT_ID/recipientAccounts/gateway \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -234,7 +234,7 @@ You must secure the source of funds. You can choose between **Debit Card** or **
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -262,7 +262,7 @@ For ACH, you provide the routing and account number directly, but before doing s
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -296,7 +296,7 @@ Before executing a transaction, it is crucial to verify that the user has not ex
 
 ```bash
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/fx/participants/$SENDER_ID/limits \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/fx/participants/$SENDER_ID/limits \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -307,7 +307,7 @@ curl --request GET \
 
 ```bash
 curl --request GET \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -330,7 +330,7 @@ Inyo provides a client-side device fingerprinting library. This library **MUST**
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/fx/transactions \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/fx/transactions \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -396,7 +396,7 @@ To receive real-time notifications about important lifecycle events (e.g., a tra
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.hubcrossborder.com/organizations/$TENANT/webhooks \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/webhooks \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
