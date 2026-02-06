@@ -443,8 +443,10 @@ The application maintains a local mapping of IDs.
 
 ## 6. Testing Data
 
-You can find card data for testing purposes at:
-[https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards](https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards)
+You can find data for testing purposes at:
+
+*  Senders: [https://dev.inyoglobal.com/api-references/remittances/sender/test-data](https://dev.inyoglobal.com/api-references/remittances/sender/test-data)
+*  Cards: [https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards](https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards)
 
 > **Important**: To successfully test transactions, it is required to use a combination of cards **with** and **without** 3D Secure (3DS).
 
