@@ -73,7 +73,7 @@ const Dashboard = ({ user }) => {
     };
 
     const handleCountryChange = (e) => {
-        const code = e.target.value;
+        const code = e.target.value.toUpperCase();
         setCountryCode(code);
         const dest = destinations.find(d => d.country === code);
         if (dest) setCurrency(dest.currency || dest.code);

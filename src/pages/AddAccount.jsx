@@ -17,7 +17,7 @@ const AddAccount = ({ user }) => {
     const [view, setView] = useState('loading'); // loading, list, add
     const [loading, setLoading] = useState(true);
 
-    const countryCode = state?.countryCode || transactionData.beneficiary?.data?.address?.countryCode || transactionData.beneficiary?.address?.countryCode || 'PE';
+    const countryCode = (state?.countryCode || transactionData.beneficiary?.data?.address?.countryCode || transactionData.beneficiary?.address?.countryCode || 'PE').toUpperCase();
 
     // Fetch Accounts and Schema
     useEffect(() => {
@@ -36,11 +36,11 @@ const AddAccount = ({ user }) => {
                 }
 
                 // Pre-fetch schema and banks for "add" mode
-                const schemaRes = await request('get', `/beneficiaries/account-schema/${countryCode.toLowerCase()}`);
+                const schemaRes = await request('get', `/beneficiaries/account-schema/${countryCode}`);
                 setSchema(schemaRes);
 
                 // Fetch banks
-                const banksRes = await request('get', `/banks/${countryCode.toLowerCase()}`);
+                const banksRes = await request('get', `/banks/${countryCode}`);
                 if (banksRes.items) {
                     setBanks(banksRes.items);
                 }
