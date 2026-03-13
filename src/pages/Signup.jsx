@@ -34,7 +34,14 @@ const Signup = ({ onLogin }) => {
         setError(null);
         try {
             const res = await request('post', '/register', formData);
-            onLogin(res);
+            if (res.token) {
+                localStorage.setItem('authToken', res.token);
+            }
+            let userData = res.user || res;
+            if (userData.id && !userData.userId) {
+                userData.userId = userData.id;
+            }
+            onLogin(userData);
         } catch (err) {
             setError(err.message || 'Registration failed');
         } finally {
