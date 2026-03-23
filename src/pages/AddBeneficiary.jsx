@@ -13,10 +13,10 @@ const AddBeneficiary = ({ user }) => {
     const [formData, setFormData] = useState({});
     const [loading, setLoading] = useState(true);
 
-    const countryCode = state?.countryCode || 'PE';
+    const countryCode = (state?.countryCode || 'PE').toUpperCase();
 
     useEffect(() => {
-        request('get', `/beneficiaries/schema/${countryCode.toLowerCase()}`)
+        request('get', `/beneficiaries/schema/${countryCode}`)
             .then(res => {
                 setSchema(res);
 

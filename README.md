@@ -27,6 +27,26 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 ### Environment Variables (.env)
 You must configure your credentials to authenticate with the sandbox environment.
 
+### mTLS (Cloudflare Mutual TLS)
+All requests to the Inyo API are protected by Cloudflare mTLS. You must provide your client certificate and private key as environment variables.
+
+**How to configure:**
+1. Open your `.env` file
+2. Add `MTLS_CERT` with the full content of your `.pem` certificate file (wrapped in double quotes)
+3. Add `MTLS_KEY` with the full content of your `.key` private key file (wrapped in double quotes)
+
+```env
+MTLS_CERT="-----BEGIN CERTIFICATE-----
+MIIEFTCCAv2g...
+-----END CERTIFICATE-----"
+
+MTLS_KEY="-----BEGIN PRIVATE KEY-----
+MIIEvwIBADANBg...
+-----END PRIVATE KEY-----"
+```
+
+> **Note**: The double quotes are required for dotenv to parse multi-line values correctly. If either variable is missing, the server will start without mTLS and API calls will be rejected by Cloudflare.
+
 ### Rate Limiting & Caching (Best Practice)
 The Inyo API enforces strict rate limits. To ensure robustness, you should implement caching for static or semi-static data.
 *   **Destinations & Banks**: Cache these responses for **24 hours**. They rarely change.
