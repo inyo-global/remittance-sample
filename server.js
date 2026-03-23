@@ -6,6 +6,8 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
+const https = require("https");
+const { X509Certificate } = require("crypto");
 
 const app = express();
 const NodeCache = require("node-cache");
@@ -13,6 +15,16 @@ const limitCache = new NodeCache({ stdTTL: 86400 }); // 24 hours
 const PORT = 3001;
 
 require("dotenv").config();
+
+const certPem = process.env.MTLS_CERT;
+const keyPem = process.env.MTLS_KEY;
+
+if (certPem && keyPem) {
+  const mtlsAgent = new https.Agent({ cert: certPem, key: keyPem });
+  axios.defaults.httpsAgent = mtlsAgent;
+} else {
+  console.warn("[mTLS] MTLS_CERT or MTLS_KEY not defined — connection without client certificate");
+}
 
 const log = {
   info: (...args) =>
@@ -589,9 +601,6 @@ app.post("/api/quotes", authenticateToken, async (req, res) => {
       { headers: API_HEADERS },
     );
 
-    if (apiRes.status !== 200) {
-      throw new Error(`API Error: Received status ${apiRes.status}`);
-    }
 
     const quotes = apiRes.data.quotes || [apiRes.data];
 
@@ -1130,6 +1139,27 @@ app.get("/api/transactions", authenticateToken, (req, res) => {
     res.json(transactions);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// --- DEBUG ---
+app.get("/api/debug/mtls", (_req, res) => {
+  try {
+    const cert = new X509Certificate(certPem);
+    res.json({
+      mtlsAgentConfigured: !!axios.defaults.httpsAgent,
+      certFile: "remittance_sample.pem",
+      keyFile: "remittance_sample.key",
+      cert: {
+        subject: cert.subject.replace(/\n/g, ", "),
+        issuer: cert.issuer.replace(/\n/g, ", "),
+        validFrom: cert.validFrom,
+        validTo: cert.validTo,
+        serialNumber: cert.serialNumber,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
