@@ -433,7 +433,7 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
       lastName: lastName || userRow?.lastName,
       email: userRow?.email,
       birthDate: userRow?.dateOfBirth,
-      phoneNumber: phoneNumber || userRow?.phoneNumber,
+      phoneNumber: (phoneNumber || userRow?.phoneNumber || '').replace(/\s+/g, ''),
       address,
       documents,
       occupation,
@@ -738,9 +738,42 @@ app.post("/api/payment-methods/cards", authenticateToken, async (req, res) => {
   }
 });
 
+app.post(
+  "/api/payment-methods/ach/link-token",
+  authenticateToken,
+  async (req, res) => {
+    const userId = req.user.id;
+    try {
+      const profile = db
+        .prepare("SELECT * FROM profiles WHERE userId = ?")
+        .get(userId);
+      if (!profile || !profile.externalId) {
+        return res
+          .status(400)
+          .json({ error: "User profile or external ID missing." });
+      }
+      const url = `${API_BASE_URL}/organizations/${TENANT}/payout/participants/${profile.externalId}/fundingAccounts/linkTokens`;
+      console.log(`Requesting Plaid link token: ${url}`);
+      const apiRes = await axios.post(
+        url,
+        { provider: "PLAID" },
+        { headers: API_HEADERS },
+      );
+      res.json(apiRes.data);
+    } catch (error) {
+      console.error(
+        "Plaid link token error:",
+        error.message,
+        error.response?.data,
+      );
+      res.status(500).json({ error: error.response?.data || error.message });
+    }
+  },
+);
+
 app.post("/api/payment-methods/ach", authenticateToken, async (req, res) => {
   const userId = req.user.id;
-  const { bankData, billingAddress } = req.body;
+  const { bankData } = req.body;
   const id = uuidv4();
 
   try {
@@ -756,34 +789,22 @@ app.post("/api/payment-methods/ach", authenticateToken, async (req, res) => {
     const payload = {
       externalId: id,
       asset: "USD",
-      nickname:
-        bankData.nickname || `My ${bankData.bankName || "Bank"} Account`,
+      nickname: bankData.nickname || "My Bank Account",
       paymentMethod: {
         type: "ACH",
         countryCode: "US",
-        bankCode: "US_ACH",
-        routingNumber: bankData.routingNumber,
-        accountNumber: bankData.accountNumber,
-        accountType: bankData.accountType, // CHECKING or SAVINGS
+        accountCheckId: bankData.accountCheckId,
+        accountCheckToken: bankData.accountCheckToken,
       },
     };
 
     const url = `${API_BASE_URL}/organizations/${TENANT}/payout/participants/${profile.externalId}/fundingAccounts`;
-    console.log(`Creating ACH: ${url}`);
+    console.log(`Creating ACH via Plaid: ${url}`);
     const apiRes = await axios.post(url, payload, { headers: API_HEADERS });
 
-    if (apiRes.status !== 201) {
-      throw new Error(`API Error: Received status ${apiRes.status}`);
-    }
+    const { id: externalId, status } = apiRes.data;
 
-    const { id: externalId } = apiRes.data;
-
-    // Mask account number for security
-    const masked = {
-      ...bankData,
-      accountNumber: `****${bankData.accountNumber.slice(-4)}`,
-    };
-    const tokenStr = JSON.stringify(masked);
+    const tokenStr = JSON.stringify({ nickname: bankData.nickname || "Bank Account" });
 
     db.prepare(
       "INSERT INTO payment_methods (id, userId, token, data, type, externalId) VALUES (?, ?, ?, ?, ?, ?)",
@@ -791,12 +812,12 @@ app.post("/api/payment-methods/ach", authenticateToken, async (req, res) => {
       id,
       userId,
       tokenStr,
-      JSON.stringify({ billingAddress, apiResponse: apiRes.data }),
+      JSON.stringify({ status, apiResponse: apiRes.data }),
       "ACH",
       externalId,
     );
 
-    res.json({ success: true, id, externalId });
+    res.json({ success: true, id, externalId, status });
   } catch (error) {
     console.error(
       "ACH Payment Method Error:",
