@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { request } from '../api';
 import { TransactionContext } from '../context/TransactionContext';
@@ -22,7 +22,7 @@ const AddPayment = ({ user }) => {
     const [challengeUrl, setChallengeUrl] = useState(null);
     const [pendingCardId, setPendingCardId] = useState(null);
 
-    const fetchMethods = async () => {
+    const fetchMethods = useCallback(async () => {
         setLoading(true);
         try {
             const res = await request('get', `/payment-methods?userId=${user.id || user.userId}`);
@@ -32,11 +32,11 @@ const AddPayment = ({ user }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [user]);
 
     useEffect(() => {
         fetchMethods();
-    }, [user]);
+    }, [fetchMethods]);
 
     const handleSelect = (method) => {
         setTransactionData(prev => ({ ...prev, paymentMethod: method }));
@@ -45,6 +45,16 @@ const AddPayment = ({ user }) => {
 
     // Load Script
     useEffect(() => {
+        if (view === 'add-ach') {
+            const PLAID_SCRIPT = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+            if (!document.querySelector(`script[src="${PLAID_SCRIPT}"]`)) {
+                const script = document.createElement("script");
+                script.src = PLAID_SCRIPT;
+                script.async = true;
+                document.body.appendChild(script);
+            }
+        }
+
         if (view === 'add-card') {
             const SCRIPT_SRC = "https://cdn.simpleps.com/sandbox/inyo.js";
 
@@ -88,7 +98,7 @@ const AddPayment = ({ user }) => {
         }
     }, [view]); // Re-init if 3DS requirement changes
 
-    const updateCardStatus = async () => {
+    const updateCardStatus = useCallback(async () => {
         if (!pendingCardId) return;
         try {
             console.log("Updating card status for:", pendingCardId);
@@ -118,7 +128,7 @@ const AddPayment = ({ user }) => {
             console.error("Update status error", e);
             alert("Error updating card status: " + e.message);
         }
-    };
+    }, [pendingCardId, fetchMethods]);
 
     // Handle 3DS Message
     useEffect(() => {
@@ -182,32 +192,38 @@ const AddPayment = ({ user }) => {
         }
     };
 
-    const handleACHSubmit = async () => {
-        // Collect ACH Data
-        const bankData = {
-            routingNumber: document.getElementById('ach-routing').value,
-            accountNumber: document.getElementById('ach-account').value,
-            accountType: document.getElementById('ach-type').value,
-            nickname: document.getElementById('ach-nickname').value
-        };
-
-        if (!bankData.routingNumber || !bankData.accountNumber || !bankData.accountType) {
-            alert("Please fill all required ACH fields.");
-            return;
-        }
-
+    const handleOpenPlaid = async () => {
         try {
             setLoading(true);
-            await request('post', '/payment-methods/ach', {
-                userId: user.id || user.userId,
-                bankData
-            });
-            await fetchMethods();
-            setView('list');
-        } catch (err) {
-            alert('Error saving bank account: ' + err.message);
-        } finally {
+            const { token } = await request('post', '/payment-methods/ach/link-token');
             setLoading(false);
+
+            const handler = window.Plaid.create({
+                token,
+                onSuccess: async (public_token, metadata) => {
+                    const account_id = metadata.accounts[0]?.id;
+                    const nickname = metadata.institution?.name || 'Bank Account';
+                    try {
+                        setLoading(true);
+                        await request('post', '/payment-methods/ach', {
+                            bankData: { accountCheckToken: public_token, accountCheckId: account_id, nickname }
+                        });
+                        await fetchMethods();
+                        setView('list');
+                    } catch (err) {
+                        alert('Error saving bank account: ' + err.message);
+                    } finally {
+                        setLoading(false);
+                    }
+                },
+                onExit: (err) => {
+                    if (err) alert('Plaid error: ' + (err.display_message || err.error_message));
+                }
+            });
+            handler.open();
+        } catch (err) {
+            setLoading(false);
+            alert('Error initiating bank connection: ' + err.message);
         }
     };
 
@@ -424,49 +440,54 @@ const AddPayment = ({ user }) => {
                     <>
                         {/* VIEW: LIST */}
                         {view === 'list' && (
-                            <div className="methods-list space-y-4">
+                            <div className="methods-list">
                                 {methods.length === 0 && (
                                     <div className="text-center p-8 text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
                                         No payment methods found. Add one to continue.
                                     </div>
                                 )}
 
-                                {methods.map(pm => (
-                                    <div
-                                        key={pm.id}
-                                        onClick={(e) => {
-                                            e.preventDefault();
-                                            console.log('Selecting payment method:', pm);
-                                            handleSelect(pm);
-                                        }}
-                                        role="button"
-                                        tabIndex={0}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                handleSelect(pm);
-                                            }
-                                        }}
-                                        className="bg-white p-4 rounded border border-gray-100 shadow-sm hover:shadow-md cursor-pointer transition-all flex justify-between items-center"
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-2xl">
-                                                {pm.type === 'ACH' ? '🏦' : '💳'}
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-gray-700 capitalize">
-                                                    {pm.type === 'ACH' ? (pm.nickname || 'Bank Account') : (pm.token?.schemeId || 'Card')}
-                                                </h3>
-                                                <p className="text-sm text-gray-400">
-                                                    {pm.type === 'ACH' ?
-                                                        `Ending in ****${pm.token.accountNumber.slice(-4)}` :
-                                                        `Ending in ${pm.token?.lastFourDigits || '****'}`
-                                                    }
-                                                </p>
+                                {['ACH', 'CARD'].map(type => {
+                                    const group = methods.filter(pm => pm.type === type);
+                                    if (group.length === 0) return null;
+                                    return (
+                                        <div key={type} style={{ marginBottom: '1.5rem' }}>
+                                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                                                {type === 'ACH' ? 'Bank Accounts' : 'Cards'}
+                                            </p>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                {group.map(pm => (
+                                                    <div
+                                                        key={pm.id}
+                                                        onClick={(e) => { e.preventDefault(); handleSelect(pm); }}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(pm); }}
+                                                        className="bg-white p-4 rounded border border-gray-100 shadow-sm hover:shadow-md cursor-pointer transition-all flex justify-between items-center"
+                                                    >
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-2xl">
+                                                                {pm.type === 'ACH' ? '🏦' : '💳'}
+                                                            </div>
+                                                            <div>
+                                                                <h3 className="font-bold text-gray-700">
+                                                                    {pm.type === 'ACH' ? (pm.data?.apiResponse?.bankName || pm.token?.nickname || 'Bank Account') : (pm.token?.schemeId || 'Card')}
+                                                                </h3>
+                                                                <p className="text-sm text-gray-400">
+                                                                    {pm.type === 'ACH'
+                                                                        ? `ACH ···· ${(pm.data?.apiResponse?.accountNumber || '').slice(-4) || '****'}`
+                                                                        : `Ending in ${pm.token?.lastFourDigits || '****'}`
+                                                                    }
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                        <span className="text-primary font-bold">Select ›</span>
+                                                    </div>
+                                                ))}
                                             </div>
                                         </div>
-                                        <span className="text-primary font-bold">Select ›</span>
-                                    </div>
-                                ))}
+                                    );
+                                })}
 
                                 <div className="flex justify-start" style={{ marginTop: '3rem' }}>
                                     <button type="button" onClick={() => {
@@ -566,45 +587,21 @@ const AddPayment = ({ user }) => {
                         {/* VIEW: ADD ACH */}
                         {view === 'add-ach' && (
                             <div className="add-form bg-white p-6 rounded shadow-sm border border-gray-100 relative">
-                                {/* Billing Section removed for ACH as per request */}
+                                <h4 className="mb-2 font-bold text-gray-700">Connect Bank Account</h4>
+                                <p className="text-sm text-gray-500 mb-6">Securely link your bank account using Plaid. Your credentials are never shared with us.</p>
 
-                                <div id="ach-form-container">
-                                    <h4 className="mb-4 font-bold text-gray-700">Bank Account Details (ACH)</h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                        <div>
-                                            <label htmlFor="ach-routing" className="block text-sm font-medium text-gray-700 mb-1">Routing Number</label>
-                                            <input type="text" id="ach-routing" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                placeholder="9 Digits" maxLength="9" required />
-                                        </div>
-                                        <div>
-                                            <label htmlFor="ach-account" className="block text-sm font-medium text-gray-700 mb-1">Account Number</label>
-                                            <input type="text" id="ach-account" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                placeholder="Account Number" required />
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                        <div>
-                                            <label htmlFor="ach-type" className="block text-sm font-medium text-gray-700 mb-1">Account Type</label>
-                                            <select id="ach-type" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary" required>
-                                                <option value="CHECKING">Checking</option>
-                                                <option value="SAVINGS">Savings</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label htmlFor="ach-nickname" className="block text-sm font-medium text-gray-700 mb-1">Account Nickname (Optional)</label>
-                                            <input type="text" id="ach-nickname" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                placeholder="e.g. Joint Checking" />
-                                        </div>
-
-                                    </div>
-                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleOpenPlaid}
+                                    disabled={loading}
+                                    className="w-full flex items-center justify-center gap-3 p-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 font-semibold hover:border-primary hover:text-primary transition-colors"
+                                >
+                                    🏦 {loading ? 'Connecting…' : 'Connect with Plaid'}
+                                </button>
 
                                 <div className="flex justify-between" style={{ marginTop: '3rem' }}>
                                     <button type="button" onClick={() => setView('select-type')} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
                                         Back
-                                    </button>
-                                    <button type="button" onClick={handleACHSubmit} className="btn btn-next px-8 py-3 text-lg rounded-full" style={{ background: 'var(--color-success)', color: 'white' }}>
-                                        Add Account
                                     </button>
                                 </div>
                             </div>
