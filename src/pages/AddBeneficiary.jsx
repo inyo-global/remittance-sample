@@ -6,16 +6,29 @@ import { TransactionContext } from '../context/TransactionContext';
 
 const AddBeneficiary = ({ user }) => {
     const { state } = useLocation();
+    
     const navigate = useNavigate();
     const { setTransactionData } = useContext(TransactionContext);
 
     const [schema, setSchema] = useState(null);
     const [formData, setFormData] = useState({});
-    const [loading, setLoading] = useState(true);
-
-    const countryCode = (state?.countryCode || 'PE').toUpperCase();
+    const [loading, setLoading] = useState(false);
+    const [countryCode, setCountryCode] = useState((state?.countryCode || '').toUpperCase());
+    const [destinations, setDestinations] = useState([]);
 
     useEffect(() => {
+        if (state?.countryCode) return;
+        request('get', '/destinations')
+            .then(data => {
+                const list = data.countryDestinations || (Array.isArray(data) ? data : []);
+                setDestinations(list);
+            })
+            .catch(console.error);
+    }, [state?.countryCode]);
+
+    useEffect(() => {
+        if (!countryCode) return;
+        setLoading(true);
         request('get', `/beneficiaries/schema/${countryCode}`)
             .then(res => {
                 setSchema(res);
@@ -202,16 +215,23 @@ const AddBeneficiary = ({ user }) => {
             </div>
 
             <div className="form-container">
-                {/* Search / Select existing - Mockup shows "Choose beneficiary" dropdown */}
-                <div className="form-group mb-6">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">BENEFICIARY</label>
-                    <div className="relative">
-                        <input className="w-full p-3 border border-gray-300 rounded text-lg bg-white" placeholder="Choose beneficiary" />
-                        <span className="absolute right-4 top-1/2 transform -translate-y-1/2 text-primary font-bold">▼</span>
-                    </div>
-                </div>
-
                 <hr className="border-gray-200 mb-6" />
+
+                {!countryCode && (
+                    <div className="form-group mb-6">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">COUNTRY</label>
+                        <select
+                            value=""
+                            onChange={e => setCountryCode(e.target.value)}
+                            className="w-full p-3 border border-gray-300 rounded text-lg bg-white appearance-none"
+                        >
+                            <option value="">Select a country</option>
+                            {destinations.map(d => (
+                                <option key={d.country} value={d.country}>{d.countryName}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 {loading ? <div className="loader"></div> : (
                     <form onSubmit={handleSubmit}>
