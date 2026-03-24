@@ -277,8 +277,33 @@ curl --request POST \
 }'
 ```
 
-#### Option B: US Bank Account (ACH)
-For ACH, you provide the routing and account number directly, but before doing so, you need to implement an ACH verification through one of our partners, to make sure the account is valid, has enough funds, and is not closed.
+#### Option B: US Bank Account (ACH via Plaid)
+
+ACH accounts are verified through **Plaid Link**. Raw routing/account numbers are never sent to the Inyo API.
+
+##### Step 1: Request a Plaid Link Token (Backend)
+
+Your backend requests a link token from Inyo, which is used to initialize Plaid on the client:
+
+```bash
+curl --request POST \
+  --url https://api.sandbox.inyoplatform.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts/linkTokens \
+  --header 'Content-Type: application/json' \
+  --header "x-api-key: $API_KEY" \
+  --header "x-agent-id: $AGENT_ID" \
+  --header "x-agent-api-key: $AGENT_KEY" \
+  --data '{ "provider": "PLAID" }'
+```
+
+Response: `{ "token": "link-sandbox-...", "expireAt": "...", "requestId": "..." }`
+
+##### Step 2: Launch Plaid Link (Frontend)
+
+Initialize Plaid Link with the token. On success, Plaid returns a `public_token` and `account_id`.
+
+##### Step 3: Create the ACH Funding Account (Backend)
+
+Send the Plaid tokens to Inyo to register the bank account:
 
 ```bash
 curl --request POST \
@@ -290,17 +315,17 @@ curl --request POST \
   --data '{
   "externalId": "'$(uuidgen)'",
   "asset": "USD",
-  "nickname": "My Checking",
+  "nickname": "My Bank Account",
   "paymentMethod": {
     "type": "ACH",
     "countryCode": "US",
-    "bankCode": "US_ACH",
-    "routingNumber": "123456789",
-    "accountNumber": "000123456789",
-    "accountType": "CHECKING"
+    "accountCheckId": "$PLAID_ACCOUNT_ID",
+    "accountCheckToken": "$PLAID_PUBLIC_TOKEN"
   }
 }'
 ```
+
+> **Note**: The account status will initially be `Pending`. It transitions to `Verified` once Plaid completes verification. Implement a polling strategy or webhook listener to detect this transition before allowing the account to be used in transactions.
 
 ### Step 8: Transaction Limits & Trust Levels
 Before executing a transaction, it is crucial to verify that the user has not exceeded their assigned limits.
