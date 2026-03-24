@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Input from '../components/Input';
 import { request } from '../api';
 
@@ -17,6 +17,7 @@ const US_STATES = [
 ];
 
 const Signup = ({ onLogin }) => {
+    const navigate = useNavigate();
     const [formData, setFormData] = useState({
         email: '', password: '', firstName: '', lastName: '', dateOfBirth: '', address: '',
         city: '', state: '', zipcode: ''
@@ -50,35 +51,109 @@ const Signup = ({ onLogin }) => {
     };
 
     return (
-        <div className="container fade-in">
-            <div className="card">
-                <h1 className="text-center mb-4">Inyo Demo App</h1>
+        <div className="fade-in" style={{ minHeight: '100vh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff', padding: '1.5rem' }}>
+            <div style={{ width: '100%', maxWidth: 560 }}>
+                {/* Back */}
+                <button
+                    type="button"
+                    onClick={() => navigate('/login')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 0, marginBottom: '1.5rem', fontSize: '0.875rem', fontWeight: 500 }}
+                >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    Back to login
+                </button>
+
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1A1A2E', marginBottom: '0.25rem' }}>Create your account</h1>
+                    <p style={{ color: '#9ca3af', fontSize: '0.875rem' }}>Fill in the details below to get started.</p>
+                </div>
+
                 <form onSubmit={handleSubmit}>
-                    <div className="grid-2">
+                    {/* Row 1: name */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                         <Input name="firstName" label="First Name" value={formData.firstName} onChange={handleChange} required />
                         <Input name="lastName" label="Last Name" value={formData.lastName} onChange={handleChange} required />
                     </div>
-                    <Input name="email" label="Email" type="email" value={formData.email} onChange={handleChange} required />
-                    <Input name="password" label="Password" type="password" value={formData.password} onChange={handleChange} required />
-                    <Input name="dateOfBirth" label="Date of Birth" type="date" value={formData.dateOfBirth} onChange={handleChange} required />
 
-                    <Input name="address" label="Address Line 1" value={formData.address} onChange={handleChange} required />
+                    {/* Row 2: email + dob */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                        <Input name="email" label="Email Address" type="email" value={formData.email} onChange={handleChange} required placeholder="you@example.com" />
+                        <Input name="dateOfBirth" label="Date of Birth" type="date" value={formData.dateOfBirth} onChange={handleChange} required />
+                    </div>
 
-                    <div className="grid-2">
+                    {/* Row 3: password full width */}
+                    <div style={{ marginBottom: '0.75rem' }}>
+                        <Input name="password" label="Password" type="password" value={formData.password} onChange={handleChange} required placeholder="••••••••" />
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: '1px solid #f0f0f0', margin: '0.75rem 0', position: 'relative' }}>
+                        <span style={{ position: 'absolute', top: '-0.55rem', left: 0, background: '#fff', paddingRight: '0.5rem', fontSize: '0.65rem', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '1px' }}>Address</span>
+                    </div>
+
+                    {/* Test address checkbox */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            onChange={e => {
+                                if (e.target.checked) {
+                                    setFormData(prev => ({ ...prev, address: '4429 CANDLEWOOD ST', city: 'LAKEWOOD', state: 'CA', zipcode: '90712' }));
+                                } else {
+                                    setFormData(prev => ({ ...prev, address: '', city: '', state: '', zipcode: '' }));
+                                }
+                            }}
+                            style={{ width: 15, height: 15, accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                        />
+                        <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Use predefined test address</span>
+                    </label>
+
+                    {/* Row 4: address full width */}
+                    <div style={{ marginBottom: '0.75rem' }}>
+                        <Input name="address" label="Address Line 1" value={formData.address} onChange={handleChange} required placeholder="123 Main St" />
+                    </div>
+
+                    {/* Row 5: city + state + zip */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 0.7fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                         <Input name="city" label="City" value={formData.city} onChange={handleChange} required />
                         <Input name="state" label="State" value={formData.state} onChange={handleChange} options={US_STATES} required />
+                        <Input name="zipcode" label="Zip" value={formData.zipcode} onChange={handleChange} required placeholder="10001" />
                     </div>
-                    <Input name="zipcode" label="Zip Code" value={formData.zipcode} onChange={handleChange} required />
 
-                    {error && <div className="text-red mb-4 text-center">{error}</div>}
+                    {error && (
+                        <div style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 8, padding: '0.6rem 1rem', fontSize: '0.8rem', textAlign: 'center', marginTop: '0.5rem' }}>
+                            {error}
+                        </div>
+                    )}
 
-                    <button type="submit" className="btn btn-primary" disabled={loading}>
-                        {loading ? 'Processing...' : 'Sign Up'}
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        style={{
+                            display: 'block',
+                            width: '100%',
+                            marginTop: '1.25rem',
+                            padding: '0.8rem',
+                            background: loading ? '#d1fae5' : 'var(--color-success)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 50,
+                            fontSize: '1rem',
+                            fontWeight: 700,
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.2s',
+                        }}
+                    >
+                        {loading ? 'Creating account…' : 'Sign Up'}
                     </button>
 
-                    <div className="text-center mt-3">
-                        <Link to="/login">Already have an account? Login</Link>
-                    </div>
+                    <p style={{ textAlign: 'center', marginTop: '1rem', color: '#9ca3af', fontSize: '0.875rem' }}>
+                        Already have an account?{' '}
+                        <Link to="/login" style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none' }}>
+                            Log in
+                        </Link>
+                    </p>
                 </form>
             </div>
         </div>

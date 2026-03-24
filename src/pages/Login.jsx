@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import Input from '../components/Input';
 import { request } from '../api';
+import logo from '../assets/inyo-logo.png';
 
 const Login = ({ onLogin }) => {
     const [formData, setFormData] = useState({ email: '', password: '' });
@@ -26,12 +27,12 @@ const Login = ({ onLogin }) => {
             if (userData.id && !userData.userId) {
                 userData.userId = userData.id;
             }
-
+            
             if (res.token) {
                 // Store token in localStorage for persistence if implementing full auth
                 localStorage.setItem('authToken', res.token);
             }
-
+            
             onLogin(userData);
         } catch (err) {
             setError(err.message || 'Login failed');
@@ -41,15 +42,19 @@ const Login = ({ onLogin }) => {
     };
 
     return (
-        <div className="login-page fade-in" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb' }}>
-            <div className="card w-full max-w-md bg-white p-8 rounded-xl shadow-lg border border-gray-100">
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-light text-secondary mb-2">Welcome Back!</h1>
-                    <p className="text-gray-400">Please log in to your account.</p>
+        <div className="fade-in" style={{ minHeight: '100vh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff' }}>
+            <div style={{ width: '100%', maxWidth: 400, padding: '2rem' }}>
+                <div style={{ marginBottom: '2rem' }}>
+                    <div style={{ marginBottom: '1.5rem'}}>
+                        <img src={logo} alt="Inyo" style={{ height: 48 }} />
+                        <p  style={{ margin: '0.45rem 0 0', fontSize: '0.75rem', fontWeight: 400, color: '#b0b0b0', letterSpacing: '0.12em', textTransform: 'uppercase' }}>REMITTANCE SAMPLE</p>
+                    </div>
+                    <h1 style={{ fontSize: '2rem', fontWeight: 700, color: '#1A1A2E', marginBottom: '0.4rem' }}>Welcome Back</h1>
+                    <p style={{ color: '#9ca3af', fontSize: '0.95rem' }}>Log in to your account to continue.</p>
                 </div>
 
                 <form onSubmit={handleSubmit}>
-                    <div className="space-y-4">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         <Input
                             name="email"
                             label="Email Address"
@@ -71,28 +76,38 @@ const Login = ({ onLogin }) => {
                     </div>
 
                     {error && (
-                        <div className="bg-red-50 text-red-500 p-3 rounded text-center text-sm mt-4 border border-red-100">
+                        <div style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 8, padding: '0.75rem 1rem', fontSize: '0.875rem', textAlign: 'center', marginTop: '1rem' }}>
                             {error}
                         </div>
                     )}
 
                     <button
                         type="submit"
-                        className="btn w-full mt-8 py-3 rounded-full text-lg font-bold transition-transform transform active:scale-95"
-                        style={{ background: 'var(--color-success)', color: 'white' }}
                         disabled={loading}
+                        style={{
+                            display: 'block',
+                            width: '100%',
+                            marginTop: '1.75rem',
+                            padding: '0.85rem',
+                            background: loading ? '#d1fae5' : 'var(--color-success)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 50,
+                            fontSize: '1rem',
+                            fontWeight: 700,
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.2s',
+                        }}
                     >
-                        {loading ? 'Logging in...' : 'Log In'}
+                        {loading ? 'Logging in…' : 'Log In'}
                     </button>
 
-                    <div className="text-center mt-6">
-                        <p className="text-gray-400 text-sm">
-                            Don't have an account?{' '}
-                            <Link to="/signup" className="text-primary font-bold hover:underline">
-                                Sign up
-                            </Link>
-                        </p>
-                    </div>
+                    <p style={{ textAlign: 'center', marginTop: '1.25rem', color: '#9ca3af', fontSize: '0.875rem' }}>
+                        Don't have an account?{' '}
+                        <Link to="/signup" style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none' }}>
+                            Sign up
+                        </Link>
+                    </p>
                 </form>
             </div>
         </div>
