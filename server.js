@@ -442,7 +442,7 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
         : undefined,
       externalId: userId,
     };
-
+    
     // Check if profile exists
     const existingProfile = db
       .prepare("SELECT externalId FROM profiles WHERE userId = ?")
@@ -469,9 +469,6 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
       );
     }
 
-    if (apiRes.status !== 200 && apiRes.status !== 201) {
-      throw new Error(`API Error: Received status ${apiRes.status}`);
-    }
 
     const { id: externalId } = apiRes.data;
 
@@ -658,7 +655,6 @@ app.post("/api/payment-methods/cards", authenticateToken, async (req, res) => {
       });
     }
 
-    // 2. Construct External API Payload
     // 2. Construct External API Payload
     // Tokenizer returns dtCreated like "2025-12-31 21:51:51", API wants ISO8601 (yyyy-MM-dd'T'HH:mm:ss.SSS'Z)
     const formatTime = (t) => {
@@ -932,7 +928,7 @@ app.post("/api/beneficiaries", authenticateToken, async (req, res) => {
       userId,
       nickname,
       externalId,
-      JSON.stringify(apiRes.data),
+      JSON.stringify({ ...formData, ...apiRes.data }),
     );
     res.json({ id: beneficiaryId, externalId });
   } catch (error) {
@@ -991,10 +987,6 @@ app.post("/api/beneficiaries/account", authenticateToken, async (req, res) => {
   try {
     const url = `${API_BASE_URL}/organizations/${TENANT}/payout/participants/${externalPersonId}/recipientAccounts/gateway`;
     const apiRes = await axios.post(url, formData, { headers: API_HEADERS });
-
-    if (apiRes.status !== 200) {
-      throw new Error(`API Error: Received status ${apiRes.status}`);
-    }
 
     const externalAccountId = apiRes.data.id;
     db.prepare("INSERT INTO beneficiary_accounts VALUES (?, ?, ?, ?)").run(
