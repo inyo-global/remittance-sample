@@ -13,7 +13,7 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 2.  **Middleware (Node.js)**: 
     *   Authenticates the user (JWT).
     *   Holds the **API Secrets** (`API_KEY`, `AGENT_KEY`).
-    *   Orchestrates calls to the **Inyo Sandbox**.
+    *   Orchestrates calls to the **Inyo test environment** (what the docs call *Sandbox*).
 3.  **Inyo API**: The financial engine handling KYC, Banking, and Settlements.
 
 ---
@@ -21,11 +21,20 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 ## 2. Setup & Configuration
 
 ### Prerequisites
-*   Node.js v18+
+*   Node.js v22 (see `.nvmrc`)
 *   npm or yarn
+*   Network access to the Inyo test environment: a Cloudflare mTLS client certificate **and** an allowlisted egress IP. A `403` with an HTML body means the IP is not allowlisted.
+
+### Frontend stack
+*   React 19 + Vite 7, React Router 7
+*   Tailwind CSS v4 (`@tailwindcss/vite`) with design tokens in `src/index.css` (`@theme`)
+*   `lucide-react` icons, shared UI primitives in `src/components/ui/`
+*   Country-specific forms are generated from the Inyo JSON schemas by `src/components/SchemaForm.jsx`
+
+See `docs/inyo-docs-audit.md` for a comparison of this sample against the official docs and the list of pending features.
 
 ### Environment Variables (.env)
-You must configure your credentials to authenticate with the sandbox environment.
+You must configure your credentials to authenticate with the test environment. The docs call it **Sandbox** and write its host as `https://{FQDN}`: Inyo gives you the FQDN together with the tenant and agent credentials at onboarding. For the Remittances API this is currently `https://api.stage.inyoplatform.com`; the older `api.sandbox.inyoplatform.com` host answers `403 blocked` and is not the Remittances test core.
 
 ### mTLS (Cloudflare Mutual TLS)
 All requests to the Inyo API are protected by Cloudflare mTLS. You must provide your client certificate and private key as environment variables.
@@ -58,8 +67,8 @@ The Inyo API enforces strict rate limits. To ensure robustness, you should imple
 PORT=3001
 JWT_SECRET=local_dev_secret_8923
 
-# Inyo API Credentials (Sandbox)
-EXTERNAL_API_URL=https://api.sandbox.example.com
+# Inyo API Credentials (test environment; the FQDN is given at onboarding)
+EXTERNAL_API_URL=https://{FQDN}
 TENANT=your_tenant_id           # Your Organization ID
 API_KEY=your_api_key            # x-api-key
 AGENT_ID=your_agent_id          # x-agent-id
@@ -83,12 +92,13 @@ This section details the exact lifecycle of a transaction. For each step, we pro
 ### Step 1: Sender Onboarding (KYC)
 Before a user can send money, they must be registered as a **Participant** ("Person") in the system. This triggers KYC/AML checks.
 
-*   **Endpoint**: `POST /organizations/{tenantId}/people`
+*   **Endpoint**: `POST /organizations/{tenantId}/v2/senders` (updates: `PATCH /v2/senders/{id}`). The `/people` endpoints are deprecated; v2 runs the rule-driven document validation and synchronous KYC number checks.
 *   **Critical Data**: You must save the returned `id`. This is the `externalId` used for all future compliance checks and transactions.
+*   **Document types** are lowercase on v2 (`passport`, `drivers_license`, `cpf`, ...); US driver's licenses need `stateCode`. The SSN is a document too (`{"type": "ssn", "document": "078051120", "countryCode": "US"}`) and is one of the Level 2 requirements next to a verified ID; `phoneNumber` is E.164.
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/people \
+  --url https://{FQDN}/organizations/$TENANT/v2/senders \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -108,10 +118,10 @@ curl --request POST \
   },
   "documents": [
     {
-      "type": "DRIVER_LICENSE",
+      "type": "drivers_license",
       "document": "D12345678",
       "countryCode": "US",
-      "issuer": "CA",
+      "stateCode": "CA",
       "expireDate": "2030-12-31"
     }
   ]
@@ -125,11 +135,32 @@ Once created, you must verify the user's status. If they are "Restricted", you c
 
 ```bash
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
+  --url https://{FQDN}/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
 ```
+
+### Step 2b: Identity Verification (KYC widget)
+Documents declared in Step 1 are *numbers*; to verify the document itself, open an Inyo360 verification session. The docs recommend this over the deprecated direct uploads.
+
+*   `POST /organizations/{tenantId}/v2/senders/{senderId}/kycSession` with `language` and `redirectUrl` returns `sessionId`, `status` and a single-use `widgetUrl` (valid 48 h). The document is picked from the sender's declared documents (driver's license, then passport, then ID cards); without a non-expired one the call returns `422 NO_VERIFIABLE_DOCUMENT`.
+*   The widget is a hosted page with no SDK or iframe API: redirect, open a webview, or send the link. It needs the camera, so HTTPS or `http://localhost`.
+*   The outcome arrives through the `DocumentUpdatedEvents` webhook; `GET …/kycSession/{sessionId}` is the fallback the sample uses. States: `PENDING` → `VERIFIED` | `REJECTED` | `PENDING_REVIEW` | `SUPERSEDED` | `FAILED` | `ERRORED` | `EXPIRED`.
+*   In sandbox every verdict is held as `PENDING_REVIEW` and nobody reviews it: settle it with `POST …/kycSession/{sessionId}/resolve` (`outcome: verified|rejected`, `reason`), sandbox/staging only. Reserved document numbers (passport `999003001`, PA driver's license `99900101`) decide the session at creation without a camera.
+
+*   `redirectUrl` must be a non-loopback URL: requests whose body mentions `localhost` or `127.0.0.1` are rejected (`422 KYC_VALIDATION_ERROR`). The sample builds it from `APP_URL`; for local development `APP_URL=http://lvh.me:3000` works out of the box (`lvh.me` resolves to 127.0.0.1) and the app must be opened from that origin, since the login session is per origin.
+
+In the sample this lives on the Compliance page (`/api/kyc/session`, `/api/kyc/session/:id/resolve`).
+
+### Step 2c: Proof of Source of Funds (Level 3)
+Level 3 needs a verified proof of funds (bank statement, pay stub). It is a file upload, not a widget:
+
+*   `POST /organizations/{tenantId}/people/{senderId}/documents/sourceOfFunds/upload`, `multipart/form-data` with `file` (pdf/jpg/jpeg/png, max 10 MB). Stored as `PROOF_OF_FUNDS`, returns `201` with the document `id` and `verificationStatus: PENDING`.
+*   Verified asynchronously (AI OCR or the compliance team); status via `GET /organizations/{tenantId}/documents/{documentId}/verificationStatus[/current]`, uploads via `GET /people/{senderId}/documents`, changes via the `DocumentUpdatedEvents` webhook.
+*   In sandbox nothing verifies it: settle with `POST /v2/senders/{senderId}/documents/{documentId}/resolve` (`outcome`, `reason`), sandbox/staging only; `verifiedBy` carries a `sandbox:` prefix.
+
+Sample: the "Proof of source of funds" card on the Compliance page (`/api/documents/source-of-funds`, `/api/documents`, `/api/documents/:id/status`, `/api/documents/:id/resolve`).
 
 ### Step 3: Verify Available Destinations
 Before selecting a country, you should verify which destinations are currently supported and their specific requirements/currencies.
@@ -139,7 +170,7 @@ Before selecting a country, you should verify which destinations are currently s
 ```bash
 # Fetch available destinations from US
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/us/destinations \
+  --url https://{FQDN}/organizations/$TENANT/payout/us/destinations \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -158,7 +189,7 @@ Before sending, you must lock in the exchange rate. The `quoteId` guarantees the
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/quotes \
+  --url https://{FQDN}/organizations/$TENANT/payout/quotes \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -187,21 +218,21 @@ A beneficiary is simply another "Person" entity, but created with the intent of 
 ```bash
 # Fetch Person Schema for Peru (PE)
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/recipients/schema/pe \
+  --url https://{FQDN}/organizations/$TENANT/payout/recipients/schema/pe \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
 
 # Fetch Account Schema for Peru (PE)
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/recipientAccounts/schema/pe \
+  --url https://{FQDN}/organizations/$TENANT/payout/recipientAccounts/schema/pe \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
 ```
 
-*   **Action 3: Create the Person**
-    *   Use the fields from the recipient schema to call `POST .../people`.
+*   **Action 3: Create the Beneficiary**
+    *   Use the fields from the recipient schema to call `POST /organizations/{tenantId}/v2/beneficiaries` (same shape as the sender; `/people` stamps the SENDER role and cannot create a recipient). The BFF lowercases the document types the schema lists in uppercase.
 
 ### Step 6: Beneficiary Account (Funding)
 
@@ -212,7 +243,7 @@ curl --request GET \
 ```bash
 # Fetch List of Banks in Peru
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/PE/banks?size=100 \
+  --url https://{FQDN}/organizations/$TENANT/payout/PE/banks?size=100 \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -224,7 +255,7 @@ curl --request GET \
 ```bash
 # Link a Peru (PE) Bank Account (Schema-specific fields)
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/participants/$RECIPIENT_ID/recipientAccounts/gateway \
+  --url https://{FQDN}/organizations/$TENANT/payout/participants/$RECIPIENT_ID/recipientAccounts/gateway \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -254,7 +285,7 @@ You must secure the source of funds. You can choose between **Debit Card** or **
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
+  --url https://{FQDN}/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -287,7 +318,7 @@ Your backend requests a link token from Inyo, which is used to initialize Plaid 
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts/linkTokens \
+  --url https://{FQDN}/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts/linkTokens \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -307,7 +338,7 @@ Send the Plaid tokens to Inyo to register the bank account:
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
+  --url https://{FQDN}/organizations/$TENANT/payout/participants/$SENDER_ID/fundingAccounts \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -341,7 +372,7 @@ Before executing a transaction, it is crucial to verify that the user has not ex
 
 ```bash
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/fx/participants/$SENDER_ID/limits \
+  --url https://{FQDN}/organizations/$TENANT/fx/participants/$SENDER_ID/limits \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -352,7 +383,7 @@ curl --request GET \
 
 ```bash
 curl --request GET \
-  --url https://api.sandbox.example.com/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
+  --url https://{FQDN}/organizations/$TENANT/participants/$SENDER_ID/complianceLevels \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
   --header "x-agent-api-key: $AGENT_KEY"
@@ -375,7 +406,7 @@ Inyo provides a client-side device fingerprinting library. This library **MUST**
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/fx/transactions \
+  --url https://{FQDN}/organizations/$TENANT/fx/transactions \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -396,6 +427,15 @@ curl --request POST \
   }
 }'
 ```
+
+---
+
+### Step 9b: Tracking the Lifecycle (Status History & Cancellation)
+A transaction exposes two summary dimensions, `complianceStatus` and `payoutStatus`, and a full audit trail:
+
+*   **History**: `GET /organizations/{tenantId}/fx/transactions/{id}/status` returns every status change, most recent first, with the system messages that explain it. The sample shows it as a timeline on the receipt page (`GET /api/transactions/:id/status`).
+*   **Cancel / reverse**: `PUT /organizations/{tenantId}/fx/transactions/{id}/status/cancel`. Inyo voids a pre-authorised payment or refunds a captured one; the response is `204` (queued, status moves to `CancelRequested` then `Cancelled`/`Refunded`) or `422` when the transfer is no longer reversible (funds delivered). The sample exposes it as `POST /api/transactions/:id/cancel` and hides the button on terminal states.
+*   The fine-grained statuses (`PaymentAuthorized`, `WaitingPayout`, `Paid`, ...) are only delivered by the `TransactionStatusChanged` webhook (Step 11).
 
 ---
 
@@ -441,7 +481,7 @@ To receive real-time notifications about important lifecycle events (e.g., a tra
 
 ```bash
 curl --request POST \
-  --url https://api.sandbox.example.com/organizations/$TENANT/webhooks \
+  --url https://{FQDN}/organizations/$TENANT/webhooks \
   --header 'Content-Type: application/json' \
   --header "x-api-key: $API_KEY" \
   --header "x-agent-id: $AGENT_ID" \
@@ -490,31 +530,31 @@ The application maintains a local mapping of IDs.
 
 You can find data for testing purposes at:
 
-*  Senders: [https://dev.inyoglobal.com/api-references/remittances/sender/test-data](https://dev.inyoglobal.com/api-references/remittances/sender/test-data)
+*  Senders, KYC document numbers, test cards and forced status transitions: [https://dev.inyoglobal.com/api-references/remittances/sandbox-testing/](https://dev.inyoglobal.com/api-references/remittances/sandbox-testing/)
 *  Cards: [https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards](https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards)
 
 > **Important**: To successfully test transactions, it is required to use a combination of cards **with** and **without** 3D Secure (3DS).
 
 ### 3DS Challenge Procedure
-For cards enabled with 3DS, the bank requires an additional authentication step known as a "challenge". This procedure is implemented in this demo using a mix of JavaScript, iframes, and server-side validation.
+Some cards require an extra authentication step (3D Secure, "3DS"). The sample follows the [Tokenizing Cards](https://dev.inyoglobal.com/api-references/payments-gateway/apis/tokenizing-cards/) and [Handling 3D Secure](https://dev.inyoglobal.com/api-references/payments-gateway/apis/payment/pulling-funds/cards/authorizing/handling-3d-secure) pages.
 
-**Technical Implementation:**
+**`threeDSData` at tokenization.** The add-card form has a "3DS in tokenizer" selector (default `off`) covering the documented options:
 
-1.  **Challenge Trigger**: If the initial tokenization response from the API returns `status: 'ActionRequired'`, the application:
-    *   Saves the card locally with a `Pending` status.
-    *   Displays a full-screen iframe loading the provided `redirectAcsUrl`.
+| Mode | `threeDSData` passed to `InyoTokenizer` | How the sample handles the challenge |
+| --- | --- | --- |
+| `off` (default) | `{ enable: false }` | The challenge, if any, comes from `POST /fundingAccounts` (`ActionRequired` + `redirectAcsUrl`) and opens in a modal iframe. |
+| `redirect` | `{ enable: true, successUrl: "<app>/api/3ds/success", failUrl: "<app>/api/3ds/fail" }` | The challenge opens in a new tab, because at the end the issuer navigates that tab to `successUrl` or `failUrl`. The BFF serves a small page there that reports back to the app and closes the tab. |
+| `postmessage` | `{ enable: true, enablePostMessage: true }` | The challenge opens in a modal iframe and the result arrives as a `postMessage` to the page. The page URL must be registered with Inyo beforehand. |
 
-2.  **Frontend Event Listener**:
-    *   The application listens for a `postMessage` event from the iframe.
-    *   It waits specifically for a payload confirming the transaction:
-        ```javascript
-        if (response.status == 'AUTHORIZED' && response.cvcResult == 'APPROVED' && response.avsResult == 'APPROVED')
-        ```
+`successUrl`/`failUrl` are built from the page origin (`http://localhost:3000` in development), which must be allowlisted for the public key.
 
-3.  **Server-Side Verification (Sync)**:
-    *   Once the frontend receives the success message, it triggers a backend sync call: `GET /api/payment-methods/:id/sync`.
-    *   The backend performs a server-to-server request to the Gateway API (`GET .../payout/fundingAccounts/{externalId}`) to confirm the status is officially `Verified`.
-    *   Only upon this upstream confirmation is the local database updated, unlocking the card for use.
+**Flow in the sample**
+
+1.  **Challenge trigger.** If `POST /fundingAccounts` answers `202` with `status: "ActionRequired"`, the card is saved locally as pending and the `redirectAcsUrl` is opened (iframe or new tab, per the table). *Payment methods* offers "Resume 3DS" for pending cards.
+2.  **Result.** The page listens for the browser-side result (`postMessage` from the issuer page, or the message from the `/api/3ds/*` landing page) and, while the challenge is open, re-reads the funding account every 5 s. A manual "check status" button is there too. The browser-side payload is never trusted; it only triggers the next step.
+3.  **Confirmation with Inyo.** `GET /api/payment-methods/:id/sync` calls `GET .../payout/fundingAccounts/{id}` and the local record follows that status. Only a `Verified` answer from Inyo unlocks the card for transactions; `Rejected` means the sender must add another card. Transactions can be re-read the same way with `GET /api/transactions/:id/sync`.
+
+**Gateway notification (optional).** The verification outcome is reported by the Inyo gateway to Inyo. If Inyo also configures that notification for your backend, the sample accepts it at `POST /api/webhooks/gateway` (JSON with `event`, `status`, `paymentId`, `externalPaymentId`, `eventDate`): `AUTHORIZED` and `DECLINED` update the matching card locally and the *Payment methods* page lists the received events. Expose the BFF with a public URL (for example a tunnel) and set `WEBHOOK_BASIC_USER` / `WEBHOOK_BASIC_PASS` if Basic Auth is agreed. Inyo remains the source of truth either way.
 
 ### Additional Resources
 For more details on handling AVS, CVC, and 3D Secure Verification, please refer to the official documentation:

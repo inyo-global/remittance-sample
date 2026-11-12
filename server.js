@@ -31,6 +31,8 @@ const log = {
     console.log(`[${new Date().toISOString()}] [INFO] `, ...args),
   error: (...args) =>
     console.error(`[${new Date().toISOString()}] [ERROR]`, ...args),
+  warn: (...args) =>
+    console.warn(`[${new Date().toISOString()}] [WARN] `, ...args),
   http: (...args) =>
     console.log(`[${new Date().toISOString()}] [HTTP] `, ...args),
 };
@@ -137,6 +139,31 @@ db.prepare(
 )`,
 ).run();
 
+// SSN/ITIN is a declared document too (docs: v2 document types `ssn` / `itin`), required for LEVEL_2.
+try { db.prepare("ALTER TABLE profiles ADD COLUMN ssn TEXT").run(); } catch { /* column exists */ }
+
+// KYC verification sessions (docs: sender/uploading-documents.md). One row per session so the
+// UI can resume the latest one; `data` keeps the last GET response (status, result, widgetUrl).
+db.prepare(
+  `CREATE TABLE IF NOT EXISTS webhook_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  receivedAt TEXT,
+  paymentId TEXT,
+  externalPaymentId TEXT,
+  status TEXT,
+  matchedCardId TEXT,
+  payload TEXT
+)`,
+  `CREATE TABLE IF NOT EXISTS kyc_sessions (
+  sessionId TEXT PRIMARY KEY,
+  userId TEXT,
+  status TEXT,
+  widgetUrl TEXT,
+  createdAt TEXT,
+  data TEXT
+)`,
+).run();
+
 const API_BASE_URL = process.env.EXTERNAL_API_URL;
 const TENANT = process.env.TENANT;
 const API_HEADERS = {
@@ -174,11 +201,96 @@ axios.interceptors.response.use(
   },
 );
 
+// --- Upstream error handling ---
+// Forwards the REAL Inyo response (status, body, cf-ray) to the frontend instead of a generic 500,
+// plus a hint based on the troubleshooting table in dev.inyoglobal.com (remittances > connectivity).
+const describeUpstream = (error) => {
+  const resp = error.response;
+  const cfg = error.config || {};
+  const method = (cfg.method || "GET").toUpperCase();
+  const url = cfg.url || "";
+  const path = url.replace(/^https?:\/\/[^/]+/, "");
+  const raw = resp?.data;
+  const isHtml = typeof raw === "string" && /<html|<!doctype/i.test(raw);
+  const body = isHtml
+    ? (raw.match(/<title>([^<]*)<\/title>/i)?.[1] || "HTML page").trim()
+    : typeof raw === "string" ? raw.slice(0, 500) : raw;
+  const status = resp?.status ?? null;
+  let hint;
+  if (!resp) {
+    hint = /EPROTO|SSL|CERT|ECONNRESET|socket hang up/i.test(error.code + " " + error.message)
+      ? "TLS handshake failed: MTLS_CERT/MTLS_KEY missing, wrong or expired."
+      : `No response from ${API_BASE_URL} (${error.code || error.message}). Check EXTERNAL_API_URL and network access.`;
+  } else if (status === 403 && isHtml) hint = "Cloudflare Access blocked the request: egress IP not on Inyo's allowlist (mTLS passed).";
+  else if (status === 401) hint = "x-api-key missing or invalid for this tenant.";
+  else if (status === 403) hint = "Valid key but TENANT does not match it, or the agent (x-agent-id) is not approved.";
+  else if (status === 404 && raw?.detail === "Not Found") hint = `Route not found at ${API_BASE_URL}: base URL, path prefix or TENANT ("${TENANT}") may be wrong for this environment.`;
+  else if (status === 404) hint = "Resource not found: the id may belong to another tenant/environment.";
+  else if (status === 422 || status === 400) hint = "Validation error: see body.errors / body.message.";
+  else if (status === 429) hint = `Rate limited (200 req/min per IP). Retry-After: ${resp.headers?.["retry-after"] || "?"}s.`;
+  else if (status >= 500) hint = "Inyo returned a server error. Retry with backoff; contact support with the cf-ray id if it persists.";
+  const message = raw?.message || raw?.error || raw?.detail || (isHtml ? body : null) || error.message;
+  return {
+    source: "inyo",
+    status,
+    method,
+    path,
+    message: typeof message === "string" ? message : JSON.stringify(message),
+    body,
+    cfRay: resp?.headers?.["cf-ray"] || null,
+    hint,
+  };
+};
+
+const upstreamError = (res, error, fallbackStatus = 502) => {
+  if (!error.config && !error.response) {
+    // Local error (db, validation), not an Inyo call
+    return res.status(500).json({ error: { source: "local", message: error.message } });
+  }
+  const info = describeUpstream(error);
+  log.error(`upstream ${info.method} ${info.path} → ${info.status ?? "NO_RESPONSE"} :: ${info.hint || info.message}`);
+  const status = info.status && info.status >= 400 && info.status < 500 ? info.status : fallbackStatus;
+  return res.status(status).json({ error: info });
+};
+
+// v2 endpoints (/v2/senders, /v2/beneficiaries) use lowercase document types; the plural
+// `drivers_license` is canonical and the v1 singular is only accepted for compatibility.
+const toE164 = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  if (raw.startsWith("+")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return `+${digits}`;
+};
+const V2_DOC_TYPES = { driver_license: "drivers_license", drivers_license: "drivers_license" };
+const v2DocType = (type) => {
+  const t = String(type || "").toLowerCase();
+  return V2_DOC_TYPES[t] || t;
+};
+const v2Documents = (documents) =>
+  (Array.isArray(documents) ? documents : [])
+    .filter((d) => d && d.document)
+    .map(({ type, issuer, ...rest }) => ({
+      ...rest,
+      type: v2DocType(type),
+      // v2 replaced `issuer` with `stateCode` (required by rule for US driver's licenses)
+      ...(issuer && !rest.stateCode ? { stateCode: issuer } : {}),
+    }));
+
 // --- Routes ---
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 
 const JWT_SECRET = process.env.JWT_SECRET || "inyo-super-secret-key-123";
+
+// Best-effort client IP for deviceData.userIpAddress (behind a proxy, trust x-forwarded-for)
+const clientIp = (req) => {
+  const fwd = req.headers["x-forwarded-for"];
+  const ip = (Array.isArray(fwd) ? fwd[0] : fwd?.split(",")[0]) || req.socket?.remoteAddress || "";
+  return ip.replace(/^::ffff:/, "") || "127.0.0.1";
+};
 
 // Middleware
 const authenticateToken = (req, res, next) => {
@@ -230,12 +342,9 @@ app.get("/api/limits", authenticateToken, async (req, res) => {
     }
     res.json(data);
   } catch (error) {
+    // Do not fake zero limits: the UI shows "unavailable" so the integrator sees the real problem
     console.error("Error fetching limits:", error.message);
-    res.json({
-      oneDayLimit: { limit: 0, used: 0 },
-      thirtyDaysLimit: { limit: 0, used: 0 },
-      oneHundredAndEightyDaysLimit: { limit: 0, used: 0 },
-    });
+    upstreamError(res, error);
   }
 });
 
@@ -249,12 +358,336 @@ app.get("/api/profile", authenticateToken, (req, res) => {
 
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    // Never expose the password hash to the frontend
+    const { password: _password, ...safeUser } = user;
+    // Only the last four digits of the SSN leave the server; the full value stays local.
+    const safeProfile = profile ? { ...profile, ssn: undefined, ssnLast4: profile.ssn ? String(profile.ssn).slice(-4) : null } : null;
     res.json({
-      user,
-      profile: profile || null,
+      user: safeUser,
+      profile: safeProfile,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// --- KYC verification session (Inyo360 widget) ---
+// Docs: remittances/sender/uploading-documents.md ("KYC Verification Sessions") and kyc/widget-delivery.md.
+// The widget is a hosted page: no SDK, no iframe API. We create the session, hand the widgetUrl
+// to the browser, and read the outcome back with GET (the DocumentUpdatedEvents webhook is the
+// production channel). In sandbox every verdict lands in PENDING_REVIEW, which /resolve settles.
+const senderOf = (userId) =>
+  db.prepare("SELECT externalId FROM profiles WHERE userId = ?").get(userId)?.externalId;
+const kycRow = (row) => (row ? { ...row, data: row.data ? JSON.parse(row.data) : null } : null);
+const saveKyc = (userId, session) => {
+  const existing = db.prepare("SELECT createdAt FROM kyc_sessions WHERE sessionId = ?").get(session.sessionId);
+  db.prepare(
+    "INSERT OR REPLACE INTO kyc_sessions (sessionId, userId, status, widgetUrl, createdAt, data) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
+    session.sessionId,
+    userId,
+    session.status,
+    session.widgetUrl || existing?.widgetUrl || null,
+    existing?.createdAt || session.createdAt || new Date().toISOString(),
+    JSON.stringify(session),
+  );
+  return kycRow(db.prepare("SELECT * FROM kyc_sessions WHERE sessionId = ?").get(session.sessionId));
+};
+
+// Where the widget sends the user afterwards. The redirect carries sessionId/status/sig; this sample
+// only uses it as a cue to re-read the session (verifying `sig` needs the tenant's webhook secret).
+// It must not point at a loopback host: Inyo's WAF (AWS managed rule EC2MetaDataSSRF_BODY) blocks
+// request bodies that mention localhost/127.0.0.1 as a suspected SSRF, and the error surfaces as a
+// KYC_VALIDATION_ERROR with a "403 Forbidden" HTML page. Set APP_URL to a non-loopback origin
+// (http://lvh.me:3000 resolves to 127.0.0.1 through public DNS; a hosts-file alias or a tunnel also work).
+const LOOPBACK = /^(localhost|127(\.\d+){3}|0\.0\.0\.0|\[?::1\]?)$/i;
+// Public origin of the app (APP_URL, else the caller's Origin/Referer), without a trailing slash.
+const appOrigin = (req) =>
+  (process.env.APP_URL || req?.headers?.origin || (req?.headers?.referer || "").replace(/(https?:\/\/[^/]+).*/, "$1") || "").replace(/\/$/, "");
+const isLoopbackUrl = (base) => {
+  let host = "";
+  try { host = new URL(base).hostname; } catch { host = ""; }
+  return !base || LOOPBACK.test(host);
+};
+const kycRedirectUrl = (req) => {
+  const base = appOrigin(req);
+  if (isLoopbackUrl(base)) {
+    const err = new Error(`redirectUrl would be "${base || "(empty)"}". Inyo's WAF rejects loopback hosts in the kycSession body (rule EC2MetaDataSSRF_BODY). Set APP_URL in .env to a non-loopback origin, e.g. http://lvh.me:3000 (resolves to 127.0.0.1), and open the app from that origin.`);
+    err.status = 400;
+    throw err;
+  }
+  return `${base}/compliance?kyc=done`;
+};
+
+// ---------------------------------------------------------------------------
+// 3DS redirect landing pages (docs: tokenizing-cards threeDSData.successUrl / failUrl)
+// ---------------------------------------------------------------------------
+// In redirect mode the token carries successUrl/failUrl pointing here. The docs describe a browser
+// redirect at the end of the challenge; on stage the gateway never redirects to them (the challenge
+// started by the core has no redirect target), so these only exist so the URLs in the token resolve.
+// If a browser does land here, the page relays the payload to the app window and the card is re-read
+// from the core. The verification result itself arrives through the gateway webhook below.
+const formBody = bodyParser.urlencoded({ extended: false });
+const threeDsLanding = (outcome) => (req, res) => {
+  const payload = { ...(req.query || {}), ...(req.body && typeof req.body === "object" ? req.body : {}) };
+  log.info(`3DS ${outcome} landing (${req.method}): ${JSON.stringify(payload).slice(0, 400)}`);
+  const message = JSON.stringify({ source: "remittance-sample-3ds", outcome, payload }).replace(/</g, "\\u003c");
+  res.type("html").send(`<!doctype html><meta charset="utf-8"><title>3D Secure ${outcome}</title>
+<body style="font-family:system-ui;padding:24px;color:#1f2937">
+<p>3D Secure authentication <strong>${outcome === "success" ? "completed" : "failed"}</strong>. Returning to the app…</p>
+<script>
+  var msg = ${message};
+  if (window.parent && window.parent !== window) window.parent.postMessage(msg, "*");
+  else if (window.opener) { window.opener.postMessage(msg, "*"); window.close(); }
+  else window.location.replace(${JSON.stringify(`/payment?3ds=${outcome}`)});
+</script></body>`);
+};
+app.all("/api/3ds/success", formBody, threeDsLanding("success"));
+app.all("/api/3ds/fail", formBody, threeDsLanding("fail"));
+
+// ---------------------------------------------------------------------------
+// Gateway webhook: payment status changed (card verification result)
+// ---------------------------------------------------------------------------
+// The core learns the 3DS outcome from the gateway's "payment status changed" event
+// (POST /webhooks/inyogateway/payments/event on the core; see docs/inyo-docs-audit.md). While that
+// webhook is not wired for this tenant, the gateway team can point the same notification at this
+// BFF (through a tunnel such as `ngrok http 3001`). Payload, as the core's sample shows:
+//   { paymentId, parentPaymentId, externalPaymentId, status: "AUTHORIZED" | "DECLINED" | ...,
+//     approved, message, responseCode, avsResult, cvcResult, ... }
+// The card is matched by the gateway paymentId kept from POST /fundingAccounts, or by
+// externalPaymentId (the core builds it as "<prefix><funding account id>"). AUTHORIZED marks the
+// local card Verified and DECLINED marks it Rejected, mirroring the core's own mapping; every other
+// status is stored without changing the card. The core remains the source of truth: a card verified
+// only here still fails on POST /fx/transactions until the core receives the same event.
+// Optional Basic Auth: set WEBHOOK_BASIC_USER / WEBHOOK_BASIC_PASS (the gateway's notification
+// agent supports BASIC); when unset, every caller is accepted and a warning is logged once.
+const cardByGatewayPaymentId = (paymentId) => {
+  if (!paymentId) return null;
+  for (const row of db.prepare("SELECT * FROM payment_methods WHERE type = 'CARD'").all()) {
+    try {
+      const data = JSON.parse(row.data);
+      if (data?.apiResponse?.gateway?.paymentId === paymentId) return { row, data };
+    } catch { /* ignore malformed rows */ }
+  }
+  return null;
+};
+const WEBHOOK_STATUS_MAP = { AUTHORIZED: "Verified", DECLINED: "Rejected" };
+let webhookAuthWarned = false;
+const webhookAuth = (req, res, next) => {
+  const user = process.env.WEBHOOK_BASIC_USER;
+  const pass = process.env.WEBHOOK_BASIC_PASS;
+  if (!user && !pass) {
+    if (!webhookAuthWarned) { log.warn("webhook route accepts unauthenticated calls (WEBHOOK_BASIC_USER/PASS not set)"); webhookAuthWarned = true; }
+    return next();
+  }
+  const header = req.headers.authorization || "";
+  const [scheme, encoded] = header.split(" ");
+  const expected = Buffer.from(`${user || ""}:${pass || ""}`).toString("base64");
+  if (scheme !== "Basic" || encoded !== expected) {
+    log.warn(`webhook rejected: bad or missing Basic Auth from ${req.ip}`);
+    return res.status(401).set("WWW-Authenticate", 'Basic realm="webhook"').json({ error: "Unauthorized" });
+  }
+  return next();
+};
+const cardByWebhookEvent = (paymentId, externalPaymentId) => {
+  const byPayment = cardByGatewayPaymentId(paymentId);
+  if (byPayment) return byPayment;
+  if (!externalPaymentId) return null;
+  for (const row of db.prepare("SELECT * FROM payment_methods WHERE type = 'CARD'").all()) {
+    try {
+      const data = JSON.parse(row.data);
+      const coreId = data?.apiResponse?.id || row.externalId;
+      if (coreId && String(externalPaymentId).endsWith(String(coreId))) return { row, data };
+    } catch { /* ignore malformed rows */ }
+  }
+  return null;
+};
+const gatewayWebhook = (req, res) => {
+  const payload = req.body && typeof req.body === "object" ? req.body : {};
+  const receivedAt = new Date().toISOString();
+  const status = String(payload.status || "").toUpperCase();
+  const paymentId = payload.paymentId || null;
+  const externalPaymentId = payload.externalPaymentId || payload.externalId || null;
+  log.info(`gateway webhook (${req.path}) status=${status || "?"} paymentId=${paymentId} externalPaymentId=${externalPaymentId}: ${JSON.stringify(payload).slice(0, 600)}`);
+  const match = cardByWebhookEvent(paymentId, externalPaymentId);
+  const newStatus = WEBHOOK_STATUS_MAP[status] || null;
+  if (match) {
+    // Observed on stage (2026-11-12): a CHECK produces two events, AUTHORIZED (the $0 verification)
+    // and then VOIDED (its reversal, "Payment Approved") with a different paymentId. Only AUTHORIZED
+    // and DECLINED decide the card; VOIDED and the rest are kept as the last event without touching
+    // the decision. The webhook paymentIds also differ from gateway.paymentId returned at creation,
+    // so the match is effectively by externalPaymentId.
+    const apiResponse = { ...(match.data.apiResponse || {}) };
+    const event = { status, statusCode: payload.statusCode ?? payload.responseCode ?? null, message: payload.statusDescription ?? payload.message ?? null, paymentId, eventDate: payload.eventDate ?? null, receivedAt, appliedStatus: newStatus };
+    const next = { ...match.data, apiResponse, lastGatewayEvent: event };
+    if (newStatus) {
+      apiResponse.status = newStatus;
+      apiResponse.coreStatus = apiResponse.coreStatus ?? null;
+      next.gatewayEvent = event;
+    }
+    db.prepare("UPDATE payment_methods SET data = ? WHERE id = ?").run(JSON.stringify(next), match.row.id);
+    log.info(`gateway webhook applied to card ${match.row.id}: ${status} -> ${newStatus || "no status change"}`);
+  } else {
+    log.warn(`gateway webhook matches no local card (paymentId=${paymentId}, externalPaymentId=${externalPaymentId})`);
+  }
+  db.prepare("INSERT INTO webhook_events (receivedAt, paymentId, externalPaymentId, status, matchedCardId, payload) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(receivedAt, paymentId, externalPaymentId, status || null, match?.row.id || null, JSON.stringify(payload));
+  res.json({ received: true, receivedAt, status: status || null, paymentId, externalPaymentId, matchedCard: match ? { id: match.row.id, newStatus } : null });
+};
+// A GET (someone checking the URL in a browser) just confirms the endpoint is reachable.
+app.get(["/api/webhooks/gateway", "/api/webhooks/inyogateway/payments/event"], (req, res) => {
+  res.json({ ok: true, expects: "POST application/json { paymentId, externalPaymentId, status, approved, message, responseCode }", basicAuth: !!(process.env.WEBHOOK_BASIC_USER || process.env.WEBHOOK_BASIC_PASS) });
+});
+app.post("/api/webhooks/gateway", webhookAuth, gatewayWebhook);
+// Same path the core exposes, so the gateway side can reuse its notification config verbatim.
+app.post("/api/webhooks/inyogateway/payments/event", webhookAuth, gatewayWebhook);
+
+// Recent events plus the public URL to hand to the gateway team (read from a local ngrok, if running).
+app.get("/api/webhooks/events", authenticateToken, async (req, res) => {
+  const events = db.prepare("SELECT id, receivedAt, paymentId, externalPaymentId, status, matchedCardId, payload FROM webhook_events ORDER BY id DESC LIMIT 30").all()
+    .map((e) => ({ ...e, payload: JSON.parse(e.payload) }));
+  let publicUrl = null;
+  try {
+    const tunnels = await axios.get("http://127.0.0.1:4040/api/tunnels", { timeout: 500 });
+    publicUrl = (tunnels.data?.tunnels || []).find((t) => String(t.public_url).startsWith("https"))?.public_url || null;
+  } catch { /* no local ngrok */ }
+  res.json({ events, publicUrl, path: "/api/webhooks/gateway", basicAuth: !!(process.env.WEBHOOK_BASIC_USER || process.env.WEBHOOK_BASIC_PASS) });
+});
+
+// POST /v2/senders/{id}/kycSession -> { sessionId, status, widgetUrl }
+app.post("/api/kyc/session", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const senderId = senderOf(userId);
+  if (!senderId) return res.status(404).json({ error: "Profile not found" });
+  const language = String(req.body?.language || "en");
+  let redirectUrl;
+  try {
+    redirectUrl = kycRedirectUrl(req);
+  } catch (e) {
+    return res.status(400).json({ error: { source: "local", message: e.message } });
+  }
+  try {
+    const url = `${API_BASE_URL}/organizations/${TENANT}/v2/senders/${senderId}/kycSession`;
+    // Docs: only `language` and `redirectUrl`; the document is resolved from the sender record
+    // (declared in documents[] of POST/PATCH /v2/senders).
+    const payload = { language, redirectUrl };
+    log.info(`kycSession payload: ${JSON.stringify(payload)}`);
+    const apiRes = await axios.post(url, payload, { headers: API_HEADERS });
+    res.status(201).json(saveKyc(userId, apiRes.data));
+  } catch (error) {
+    upstreamError(res, error);
+  }
+});
+
+// Latest session for this user, re-read from Inyo (GET /v2/senders/{id}/kycSession/{sessionId}).
+app.get("/api/kyc/session", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const latest = db
+    .prepare("SELECT * FROM kyc_sessions WHERE userId = ? ORDER BY createdAt DESC LIMIT 1")
+    .get(userId);
+  if (!latest) return res.json(null);
+  if (req.query.refresh === "false") return res.json(kycRow(latest));
+  const senderId = senderOf(userId);
+  try {
+    const url = `${API_BASE_URL}/organizations/${TENANT}/v2/senders/${senderId}/kycSession/${latest.sessionId}`;
+    const apiRes = await axios.get(url, { headers: API_HEADERS });
+    res.json(saveKyc(userId, { ...apiRes.data, sessionId: apiRes.data.sessionId || latest.sessionId }));
+  } catch (error) {
+    upstreamError(res, error);
+  }
+});
+
+// Sandbox/staging only (docs: sandbox-testing.md "Resolving a Held KYC Session"): settles a
+// PENDING_REVIEW session as verified/rejected, running the same code as an Inyo reviewer.
+app.post("/api/kyc/session/:sessionId/resolve", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const row = db.prepare("SELECT * FROM kyc_sessions WHERE sessionId = ? AND userId = ?").get(req.params.sessionId, userId);
+  if (!row) return res.status(404).json({ error: "Session not found" });
+  const outcome = req.body?.outcome === "rejected" ? "rejected" : "verified";
+  const reason = String(req.body?.reason || "Cleared for the integration walkthrough").slice(0, 255);
+  try {
+    const url = `${API_BASE_URL}/organizations/${TENANT}/v2/senders/${senderOf(userId)}/kycSession/${row.sessionId}/resolve`;
+    const apiRes = await axios.post(url, { outcome, reason }, { headers: API_HEADERS });
+    limitCache.del(userId);
+    res.json(saveKyc(userId, { ...apiRes.data, sessionId: apiRes.data.sessionId || row.sessionId }));
+  } catch (error) {
+    // 409 NOT_HELD etc. carry the session's actual status in the body; pass it through.
+    upstreamError(res, error);
+  }
+});
+
+// --- Proof of source of funds (LEVEL_3) ---
+// Docs: sender/uploading-documents.md "Source of Funds" + sandbox-testing.md "Resolving a Pending
+// Document Review". A file upload (pdf/jpg/jpeg/png, max 10 MB) stored as PROOF_OF_FUNDS; it stays
+// PENDING in sandbox until /resolve settles it, then the compliance level can move to LEVEL_3.
+const UPLOAD_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" };
+
+// The browser sends the raw file bytes (Content-Type = file type, X-File-Name = name) and the BFF
+// re-wraps them as multipart/form-data for Inyo, so no multipart parser is needed here.
+app.post(
+  "/api/documents/source-of-funds",
+  authenticateToken,
+  express.raw({ type: () => true, limit: "11mb" }),
+  async (req, res) => {
+    const userId = req.user.id;
+    const senderId = senderOf(userId);
+    if (!senderId) return res.status(404).json({ error: "Profile not found" });
+    const contentType = String(req.headers["content-type"] || "").split(";")[0].trim();
+    const ext = UPLOAD_TYPES[contentType];
+    if (!ext) return res.status(415).json({ error: { source: "local", message: `Unsupported file type "${contentType}": the docs accept pdf, jpg, jpeg or png.` } });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: { source: "local", message: "Empty upload." } });
+    if (req.body.length > 10 * 1024 * 1024) return res.status(413).json({ error: { source: "local", message: "The docs cap uploads at 10 MB." } });
+    const fileName = String(req.headers["x-file-name"] || `source-of-funds.${ext}`).replace(/[^\w.-]+/g, "_");
+    try {
+      const form = new FormData();
+      form.append("file", new Blob([req.body], { type: contentType }), fileName);
+      const url = `${API_BASE_URL}/organizations/${TENANT}/people/${senderId}/documents/sourceOfFunds/upload`;
+      const apiRes = await axios.post(url, form, { headers: { ...API_HEADERS, "content-type": undefined }, maxBodyLength: Infinity });
+      res.status(201).json(apiRes.data);
+    } catch (error) {
+      upstreamError(res, error);
+    }
+  },
+);
+
+// Uploads only (GET /people/{id}/documents): documents verified through a KYC session are not here.
+app.get("/api/documents", authenticateToken, async (req, res) => {
+  const senderId = senderOf(req.user.id);
+  if (!senderId) return res.json([]);
+  try {
+    const url = `${API_BASE_URL}/organizations/${TENANT}/people/${senderId}/documents`;
+    const apiRes = await axios.get(url, { headers: API_HEADERS });
+    res.json(Array.isArray(apiRes.data) ? apiRes.data : apiRes.data?.documents || []);
+  } catch (error) {
+    upstreamError(res, error);
+  }
+});
+
+// Verification status history: entries with status, reason, verifiedBy, createdAt.
+app.get("/api/documents/:id/status", authenticateToken, async (req, res) => {
+  try {
+    const url = `${API_BASE_URL}/organizations/${TENANT}/documents/${req.params.id}/verificationStatus`;
+    const apiRes = await axios.get(url, { headers: API_HEADERS });
+    res.json(apiRes.data);
+  } catch (error) {
+    upstreamError(res, error);
+  }
+});
+
+// Sandbox/staging only: POST /v2/senders/{id}/documents/{documentId}/resolve { outcome, reason }.
+app.post("/api/documents/:id/resolve", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const senderId = senderOf(userId);
+  if (!senderId) return res.status(404).json({ error: "Profile not found" });
+  const outcome = req.body?.outcome === "rejected" ? "rejected" : "verified";
+  const reason = String(req.body?.reason || "Cleared for the integration walkthrough").slice(0, 255);
+  try {
+    const url = `${API_BASE_URL}/organizations/${TENANT}/v2/senders/${senderId}/documents/${req.params.id}/resolve`;
+    const apiRes = await axios.post(url, { outcome, reason }, { headers: API_HEADERS });
+    limitCache.del(userId);
+    res.json(apiRes.data);
+  } catch (error) {
+    upstreamError(res, error);
   }
 });
 
@@ -278,7 +711,7 @@ app.get("/api/compliance", authenticateToken, async (req, res) => {
       res.json(apiRes.data);
     } catch (apiErr) {
       console.log(apiErr);
-      return res.status(500).json({ error: apiErr.message });
+      return upstreamError(res, apiErr);
     }
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -392,6 +825,7 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
     lastName,
     state,
     phoneNumber,
+    ssn,
   } = req.body;
   try {
     // 1. Update User info (Phone Number) if provided
@@ -415,25 +849,31 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
     };
 
     // Construct Document
+    // Docs (sender/README.md, v2): lowercase types, `stateCode` for US driver's licenses.
     const documents = [];
     if (docType && docNumber) {
+      const type = v2DocType(docType);
       const doc = {
-        type: docType.toUpperCase(),
+        type,
         document: docNumber,
-        countryCode: issuingCountry || "US",
+        countryCode: type === "drivers_license" ? "US" : issuingCountry || "US",
       };
       if (expirationDate) doc.expireDate = expirationDate;
-      if (docType.toUpperCase() === "DRIVER_LICENSE" && state)
-        doc.issuer = state;
+      if (type === "drivers_license" && state) doc.stateCode = state;
       documents.push(doc);
     }
+    // SSN goes in documents[] as its own type (digits only). Never selected for the KYC widget;
+    // it is one of the LEVEL_2 requirements next to the verified identity document.
+    const ssnDigits = String(ssn || "").replace(/\D/g, "");
+    if (ssnDigits) documents.push({ type: "ssn", document: ssnDigits, countryCode: "US" });
 
     const payload = {
       firstName: firstName || userRow?.firstName,
       lastName: lastName || userRow?.lastName,
       email: userRow?.email,
       birthDate: userRow?.dateOfBirth,
-      phoneNumber: (phoneNumber || userRow?.phoneNumber || '').replace(/\s+/g, ''),
+      // Docs want E.164 ("+15551234567"); the form accepts any US formatting.
+      phoneNumber: toE164(phoneNumber || userRow?.phoneNumber || ""),
       address,
       documents,
       occupation,
@@ -450,20 +890,22 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
 
     let apiRes;
     if (existingProfile && existingProfile.externalId) {
-      // Update existing via PATCH
+      // PATCH /v2/senders/{id}: only the fields sent are updated; documents with the same
+      // type + number are updated in place (docs: "Updating a Sender (v2)").
       console.log(
-        `Patching existing participant: ${existingProfile.externalId}`,
+        `Patching existing sender: ${existingProfile.externalId}`,
       );
       apiRes = await axios.patch(
-        `${API_BASE_URL}/organizations/${TENANT}/people/${existingProfile.externalId}`,
+        `${API_BASE_URL}/organizations/${TENANT}/v2/senders/${existingProfile.externalId}`,
         payload,
         { headers: API_HEADERS },
       );
     } else {
-      // Create new via POST
-      console.log(`Creating new participant`);
+      // POST /v2/senders (the /people endpoints are deprecated). Idempotent on externalId:
+      // 201 = created, 200 = a sender with this externalId already existed.
+      console.log(`Creating new sender`);
       apiRes = await axios.post(
-        `${API_BASE_URL}/organizations/${TENANT}/people`,
+        `${API_BASE_URL}/organizations/${TENANT}/v2/senders`,
         payload,
         { headers: API_HEADERS },
       );
@@ -488,7 +930,7 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
     );
 
     db.prepare(
-      "INSERT OR REPLACE INTO profiles (userId, gender, occupation, docType, docNumber, issuingCountry, expirationDate, externalId, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO profiles (userId, gender, occupation, docType, docNumber, issuingCountry, expirationDate, externalId, data, ssn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       userId,
       gender,
@@ -499,14 +941,12 @@ app.post("/api/complete-profile", authenticateToken, async (req, res) => {
       expirationDate,
       externalId,
       extraData,
+      ssnDigits || null,
     );
     res.json({ success: true, externalId });
   } catch (error) {
     console.error("Profile update error:", error);
-    res.status(500).json({
-      error: "Failed sync",
-      details: error.response?.data || error.message,
-    });
+    upstreamError(res, error);
   }
 });
 
@@ -527,7 +967,7 @@ app.get("/api/destinations", authenticateToken, async (req, res) => {
     destinationsCache = { data: apiRes.data, timestamp: Date.now() };
     res.json(apiRes.data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    upstreamError(res, error);
   }
 });
 
@@ -551,7 +991,7 @@ app.get("/api/banks/:countryCode", authenticateToken, async (req, res) => {
     banksCache[countryCode] = { data: apiRes.data, timestamp: Date.now() };
     res.json(apiRes.data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    upstreamError(res, error);
   }
 });
 
@@ -621,7 +1061,7 @@ app.post("/api/quotes", authenticateToken, async (req, res) => {
 
     res.json(apiRes.data);
   } catch (error) {
-    res.status(500).json({ error: error.response?.data || error.message });
+    upstreamError(res, error);
   }
 });
 
@@ -638,8 +1078,11 @@ db.prepare(
 
 app.post("/api/payment-methods/cards", authenticateToken, async (req, res) => {
   const userId = req.user.id;
-  const { token, billingAddress } = req.body; // token is the object from tokenizer
+  const { token, billingAddress, threeDsMode } = req.body; // token is the object from tokenizer
   const id = uuidv4();
+  // Which threeDSData the page tokenized with (off | redirect | postmessage); only for the log, the
+  // card-token request itself goes from the browser straight to the gateway.
+  log.info(`card registration: tokenizer 3DS mode = ${threeDsMode || "unknown"}, bin ${token?.bin || "?"} ···· ${token?.lastFourDigits || "?"}`);
 
   try {
     // 1. Get User and Profile to get address details and externalId (participantId)
@@ -700,17 +1143,19 @@ app.post("/api/payment-methods/cards", authenticateToken, async (req, res) => {
 
     console.log("API Response:", apiRes.data);
 
-    if (apiRes.status !== 201) {
+    // 201 = created (Verified / Rejected); 202 = accepted, pending the 3DS challenge (ActionRequired + redirectAcsUrl)
+    if (apiRes.status < 200 || apiRes.status >= 300) {
       throw new Error(`API Error: Received status ${apiRes.status}`);
     }
 
     const responseData = apiRes.data;
     const { status, redirectAcsUrl, statusMessage } = responseData;
 
-    if (status === "Declined") {
+    // Docs: the complete set is Pending | ActionRequired | Verified | Rejected ("Declined" was an older value)
+    if (status === "Rejected" || status === "Declined") {
       return res.status(400).json({
         success: false,
-        error: statusMessage || "Card was declined",
+        error: statusMessage || "Card was rejected by the gateway",
         status,
       });
     }
@@ -731,10 +1176,24 @@ app.post("/api/payment-methods/cards", authenticateToken, async (req, res) => {
       externalId,
     );
 
-    res.json({ success: true, id, externalId, status, redirectAcsUrl });
+    res.json({ success: true, id, externalId, status, redirectAcsUrl, gatewayPaymentId: responseData.gateway?.paymentId || null });
   } catch (error) {
-    console.error("Payment Method Error:", error.message, error.response?.data);
-    res.status(500).json({ error: error.response?.data || error.message });
+    const body = error.response?.data;
+    // The core answers 422 with the funding account itself when the gateway rejects the card.
+    if (error.response?.status === 422 && body?.status === "Rejected") {
+      const info = describeUpstream(error);
+      log.error(`card rejected by gateway: ${body.statusMessage} ${JSON.stringify(body.gateway || {})}`);
+      return res.status(400).json({
+        error: {
+          ...info,
+          message: `Card rejected: ${body.statusMessage || "no reason given"}`,
+          body: { status: body.status, statusMessage: body.statusMessage, gateway: body.gateway },
+          hint: "The gateway could not validate the token. \"Card information is required\" (PAY_185/PAY_255) usually means the token was minted under a different merchant or gateway environment than this tenant's gateway credentials.",
+        },
+      });
+    }
+    console.error("Payment Method Error:", error.message, body);
+    upstreamError(res, error);
   }
 });
 
@@ -766,7 +1225,7 @@ app.post(
         error.message,
         error.response?.data,
       );
-      res.status(500).json({ error: error.response?.data || error.message });
+      upstreamError(res, error);
     }
   },
 );
@@ -824,7 +1283,7 @@ app.post("/api/payment-methods/ach", authenticateToken, async (req, res) => {
       error.message,
       error.response?.data,
     );
-    res.status(500).json({ error: error.response?.data || error.message });
+    upstreamError(res, error);
   }
 });
 
@@ -841,14 +1300,40 @@ app.get("/api/payment-methods", authenticateToken, (req, res) => {
         token: JSON.parse(r.token),
         data: JSON.parse(r.data),
       }))
-      .filter((pm) => {
-        // Filter out ActionRequired cards unless confirmed
-        const status = pm.data?.apiResponse?.status;
-        return status !== "ActionRequired" && status !== "Challenge";
-      });
+      // Docs: every funding account carries isActive; hide deactivated ones. ActionRequired cards stay
+      // listed so the sender can resume the 3DS challenge (the UI refuses them for transactions).
+      .filter((pm) => pm.data?.apiResponse?.isActive !== false);
     res.json(paymentMethods);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Docs (sender-funding-account, "Deactivating a Funding Account"): DELETE is a soft, one-way deactivation.
+// The core keeps the row with isActive=false; this sample drops its local copy once the core confirms.
+app.delete("/api/payment-methods/:id", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { id } = req.params;
+  try {
+    const row = db.prepare("SELECT * FROM payment_methods WHERE id = ? AND userId = ?").get(id, userId);
+    if (!row) return res.status(404).json({ error: "Payment method not found" });
+    const profile = db.prepare("SELECT externalId FROM profiles WHERE userId = ?").get(userId);
+
+    let upstream = null;
+    if (row.externalId && profile?.externalId) {
+      const url = `${API_BASE_URL}/organizations/${TENANT}/payout/participants/${profile.externalId}/fundingAccounts/${row.externalId}`;
+      const apiRes = await axios.delete(url, { headers: API_HEADERS });
+      upstream = apiRes.data;
+      if (upstream && upstream.isActive !== false) {
+        log.error(`fundingAccount ${row.externalId} still active after DELETE: ${JSON.stringify(upstream).slice(0, 200)}`);
+        return res.status(502).json({ error: { source: "inyo", status: apiRes.status, method: "DELETE", path: new URL(url).pathname, message: "Inyo did not deactivate the funding account", body: { isActive: upstream.isActive, status: upstream.status } } });
+      }
+    }
+
+    db.prepare("DELETE FROM payment_methods WHERE id = ? AND userId = ?").run(id, userId);
+    res.json({ success: true, id, externalId: row.externalId, isActive: false, upstream });
+  } catch (error) {
+    upstreamError(res, error);
   }
 });
 
@@ -879,7 +1364,27 @@ app.get(
       console.log(`Syncing card status: ${url}`);
 
       const apiRes = await axios.get(url, { headers: API_HEADERS });
-      const newData = { ...currentData, apiResponse: apiRes.data };
+      // GET /fundingAccounts omits redirectAcsUrl and the gateway block (and answers "Actionrequired");
+      // keep both from the creation response: the ACS URL resumes the challenge and gateway.paymentId
+      // is how webhook events are matched to this card.
+      const previous = currentData.apiResponse || {};
+      const coreStatus = apiRes.data.status;
+      const applied = currentData.gatewayEvent?.appliedStatus || null;
+      // The core only leaves ActionRequired through its own gateway webhook. When that webhook reached
+      // this BFF but not the core, keep the gateway's verdict as the card status and record what the
+      // core says in coreStatus, so the UI can show both instead of flip-flopping on every sync.
+      const coreStillPending = /^action\s*required$/i.test(String(coreStatus || "").replace(/\s+/g, ""));
+      const newData = {
+        ...currentData,
+        apiResponse: {
+          ...apiRes.data,
+          status: applied && coreStillPending ? applied : coreStatus,
+          coreStatus: applied && coreStillPending ? coreStatus : null,
+          redirectAcsUrl: apiRes.data.redirectAcsUrl || previous.redirectAcsUrl || null,
+          gateway: apiRes.data.gateway || previous.gateway || null,
+        },
+      };
+      if (applied && coreStillPending) log.warn(`card ${id}: gateway webhook said ${currentData.gatewayEvent.status} but the core still answers ${coreStatus} (core has not received the webhook)`);
 
       db.prepare("UPDATE payment_methods SET data = ? WHERE id = ?").run(
         JSON.stringify(newData),
@@ -888,12 +1393,13 @@ app.get(
 
       res.json({
         success: true,
-        status: apiRes.data.status,
-        data: apiRes.data,
+        status: newData.apiResponse.status,
+        coreStatus: newData.apiResponse.coreStatus,
+        data: newData.apiResponse,
       });
     } catch (error) {
       console.error("Sync Error:", error.message);
-      res.status(500).json({ error: error.message });
+      upstreamError(res, error);
     }
   },
 );
@@ -907,7 +1413,7 @@ app.get("/api/beneficiaries", authenticateToken, (req, res) => {
   res.json(beneficiaries);
 });
 
-app.get("/api/beneficiaries/schema/:countryCode", async (req, res) => {
+app.get("/api/beneficiaries/schema/:countryCode", authenticateToken, async (req, res) => {
   try {
     const { countryCode } = req.params;
     const apiRes = await axios.get(
@@ -916,49 +1422,54 @@ app.get("/api/beneficiaries/schema/:countryCode", async (req, res) => {
     );
     res.json(apiRes.data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    upstreamError(res, error);
   }
 });
 
 app.post("/api/beneficiaries", authenticateToken, async (req, res) => {
   const userId = req.user.id;
-  const { nickname, countryCode, formData } = req.body;
+  const { nickname, formData } = req.body;
   const beneficiaryId = uuidv4();
   try {
+    // POST /v2/beneficiaries (docs: recipient.md). The deprecated /people endpoint stamps the
+    // SENDER role, so it cannot create a recipient. Same shape as the sender; document types
+    // are normalised to the lowercase v2 vocabulary (the recipient schema still lists them uppercase).
     const payload = {
       ...formData,
+      documents: v2Documents(formData?.documents),
       externalId: beneficiaryId, // Map local ID to externalId
     };
 
     console.log("Creating beneficiary:", payload);
 
     const apiRes = await axios.post(
-      `${API_BASE_URL}/organizations/${TENANT}/people`,
+      `${API_BASE_URL}/organizations/${TENANT}/v2/beneficiaries`,
       payload,
       { headers: API_HEADERS },
     );
 
-    if (apiRes.status !== 200) {
+    // 201 = created, 200 = already existed for this externalId (idempotent create)
+    if (![200, 201].includes(apiRes.status)) {
       throw new Error(`API Error: Received status ${apiRes.status}`);
     }
 
     const externalId = apiRes.data.id;
-    // Store more complete response data (including documentId if returned)
+    // Keep what the user typed on top: the API echoes null for fields it does not store
     db.prepare("INSERT INTO beneficiaries VALUES (?, ?, ?, ?, ?)").run(
       beneficiaryId,
       userId,
       nickname,
       externalId,
-      JSON.stringify({ ...formData, ...apiRes.data }),
+      JSON.stringify({ ...apiRes.data, ...formData }),
     );
     res.json({ id: beneficiaryId, externalId });
   } catch (error) {
     console.error("Beneficiary creation error:", error);
-    res.status(500).json({ error: error.response?.data || error.message });
+    upstreamError(res, error);
   }
 });
 
-app.get("/api/beneficiaries/account-schema/:countryCode", async (req, res) => {
+app.get("/api/beneficiaries/account-schema/:countryCode", authenticateToken, async (req, res) => {
   try {
     const { countryCode } = req.params;
     const apiRes = await axios.get(
@@ -967,7 +1478,7 @@ app.get("/api/beneficiaries/account-schema/:countryCode", async (req, res) => {
     );
     res.json(apiRes.data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    upstreamError(res, error);
   }
 });
 
@@ -1018,7 +1529,7 @@ app.post("/api/beneficiaries/account", authenticateToken, async (req, res) => {
     );
     res.json({ id: accountId, externalAccountId });
   } catch (error) {
-    res.status(500).json({ error: error.response?.data || error.message });
+    upstreamError(res, error);
   }
 });
 
@@ -1085,11 +1596,11 @@ app.post("/api/transactions", authenticateToken, async (req, res) => {
       fundingAccountId: paymentMethod.externalId,
       recipientAccountId: account.externalId,
       quoteId: quote.quoteId,
-      additionalData: {
-        some: "data",
-      },
+      // TODO (docs: transaction > device fingerprint): load the fingerprint library in the
+      // browser and pass its requestId/visitorId here as deviceData.fingerprint / deviceData.visitor.
+      // Tenants with fingerprinting enabled (the default) reject transactions without them.
       deviceData: {
-        userIpAddress: "1.2.3.4",
+        userIpAddress: clientIp(req),
       },
     };
 
@@ -1117,7 +1628,7 @@ app.post("/api/transactions", authenticateToken, async (req, res) => {
       transactionId,
       userId,
       data.id, // externalId
-      data.status?.payoutStatus,
+      data.payoutStatus || data.status?.payoutStatus,
       data.totalAmount?.amount,
       data.totalAmount?.currency,
       data.recipient?.name,
@@ -1136,7 +1647,86 @@ app.post("/api/transactions", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Transaction Error:", error.response?.data || error.message);
-    res.status(500).json({ error: error.response?.data || error.message });
+    upstreamError(res, error);
+  }
+});
+
+// Re-reads one transaction from Inyo (GET /fx/transactions/{id}) and updates the local copy.
+// The docs recommend webhooks (TransactionStatusChanged) in production; polling is fine for a sample.
+app.get("/api/transactions/:id/sync", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const row = db
+      .prepare("SELECT * FROM transactions WHERE id = ? AND userId = ?")
+      .get(req.params.id, userId);
+    if (!row) return res.status(404).json({ error: "Transaction not found" });
+
+    const url = `${API_BASE_URL}/organizations/${TENANT}/fx/transactions/${row.externalId}`;
+    const apiRes = await axios.get(url, { headers: API_HEADERS });
+    const data = { ...JSON.parse(row.data), ...apiRes.data };
+    const status = data.payoutStatus || data.status?.payoutStatus || row.status;
+
+    db.prepare("UPDATE transactions SET status = ?, data = ? WHERE id = ?").run(status, JSON.stringify(data), row.id);
+    limitCache.del(userId);
+    res.json({ ...row, status, data });
+  } catch (error) {
+    upstreamError(res, error);
+  }
+});
+
+// Status history (docs: transaction > "Get Transaction Status History"): the full audit trail,
+// most recent first. Each row carries the summary pair (complianceStatus / payoutStatus) and
+// the system messages that explain the change.
+app.get("/api/transactions/:id/status", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const row = db
+      .prepare("SELECT externalId FROM transactions WHERE id = ? AND userId = ?")
+      .get(req.params.id, userId);
+    if (!row) return res.status(404).json({ error: "Transaction not found" });
+
+    const url = `${API_BASE_URL}/organizations/${TENANT}/fx/transactions/${row.externalId}/status`;
+    const apiRes = await axios.get(url, { headers: API_HEADERS });
+    res.json(Array.isArray(apiRes.data) ? apiRes.data : apiRes.data?.history || []);
+  } catch (error) {
+    upstreamError(res, error);
+  }
+});
+
+// Cancel / reverse (docs: transaction > "Cancelling / Reversing a Transaction").
+// One endpoint: Inyo voids a pre-authorised payment or refunds a captured one. Asynchronous:
+// 204 = reversal queued (CancelRequested -> Cancelled/Refunded); 422 = not reversible any more.
+app.post("/api/transactions/:id/cancel", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const row = db
+      .prepare("SELECT * FROM transactions WHERE id = ? AND userId = ?")
+      .get(req.params.id, userId);
+    if (!row) return res.status(404).json({ error: "Transaction not found" });
+
+    const url = `${API_BASE_URL}/organizations/${TENANT}/fx/transactions/${row.externalId}/status/cancel`;
+    const apiRes = await axios.put(url, null, { headers: API_HEADERS });
+    if (apiRes.status < 200 || apiRes.status >= 300) {
+      throw new Error(`API Error: Status ${apiRes.status}`);
+    }
+
+    // The status only changes once Inyo processes the reversal; re-read it so the UI is current.
+    let data = JSON.parse(row.data);
+    try {
+      const fresh = await axios.get(
+        `${API_BASE_URL}/organizations/${TENANT}/fx/transactions/${row.externalId}`,
+        { headers: API_HEADERS },
+      );
+      data = { ...data, ...fresh.data };
+    } catch (e) {
+      log.warn(`cancel accepted but re-read failed: ${e.message}`);
+    }
+    const status = data.payoutStatus || data.status?.payoutStatus || row.status;
+    db.prepare("UPDATE transactions SET status = ?, data = ? WHERE id = ?").run(status, JSON.stringify(data), row.id);
+    limitCache.del(userId);
+    res.json({ success: true, accepted: apiRes.status, ...row, status, data });
+  } catch (error) {
+    upstreamError(res, error);
   }
 });
 
@@ -1156,6 +1746,30 @@ app.get("/api/transactions", authenticateToken, (req, res) => {
 });
 
 // --- DEBUG ---
+// GET /api/debug/upstream — one call per credential level, with the real status/body and a hint.
+app.get("/api/debug/upstream", async (_req, res) => {
+  const checks = [
+    { name: "destinations (agent keys)", url: `${API_BASE_URL}/organizations/${TENANT}/payout/us/destinations` },
+    { name: "recipient schema BR (agent keys)", url: `${API_BASE_URL}/organizations/${TENANT}/payout/recipients/schema/br` },
+  ];
+  const results = [];
+  for (const c of checks) {
+    try {
+      const r = await axios.get(c.url, { headers: API_HEADERS, timeout: 15000 });
+      results.push({ ...c, ok: true, status: r.status, cfRay: r.headers?.["cf-ray"] || null, sample: JSON.stringify(r.data).slice(0, 200) });
+    } catch (error) {
+      results.push({ ...c, ok: false, ...describeUpstream(error) });
+    }
+  }
+  res.json({
+    baseUrl: API_BASE_URL,
+    tenant: TENANT,
+    headersSent: { "x-api-key": !!API_HEADERS["x-api-key"], "x-agent-id": API_HEADERS["x-agent-id"] || null, "x-agent-api-key": !!API_HEADERS["x-agent-api-key"] },
+    mtls: !!axios.defaults.httpsAgent,
+    results,
+  });
+});
+
 app.get("/api/debug/mtls", (_req, res) => {
   try {
     const cert = new X509Certificate(certPem);
