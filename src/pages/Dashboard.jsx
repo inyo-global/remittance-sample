@@ -1,201 +1,205 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useCallback, useContext, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowRight, Clock, RefreshCw, Sparkles } from 'lucide-react';
+import { Card, CardBody } from '../components/ui/Card';
+import Field from '../components/ui/Field';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
+import PageHeader from '../components/ui/PageHeader';
 import { request } from '../api';
-import { TransactionContext } from '../context/TransactionContext';
+import { TransactionContext } from '../context/transaction';
+import useQuoteCountdown from '../lib/useQuoteCountdown';
+import { amount, errorMessage, money, rate } from '../lib/format';
+import { cx } from '../lib/cx';
 
-const Dashboard = ({ user }) => {
+const AMOUNT_TYPES = [
+    { value: 'NET', label: 'Net', hint: 'Fee is added on top. You send the full amount.' },
+    { value: 'GROSS', label: 'Gross', hint: 'Fee is deducted from the amount you enter.' },
+];
+
+/**
+ * Step 1 of the send flow: pick a destination and lock an FX rate
+ * (POST /payout/quotes). The quote object is kept in context untouched.
+ */
+const Dashboard = ({ user, hasProfile }) => {
     const navigate = useNavigate();
     const { transactionData, setTransactionData } = useContext(TransactionContext);
+    const quote = transactionData.quote;
+    const countdown = useQuoteCountdown(quote);
 
     const [destinations, setDestinations] = useState([]);
-    const [amount, setAmount] = useState(100);
-    const [currency, setCurrency] = useState('');
-    const [countryCode, setCountryCode] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [destError, setDestError] = useState(null);
     const [loadingDest, setLoadingDest] = useState(true);
-    const [amountType, setAmountType] = useState('NET');
+    const [countryCode, setCountryCode] = useState(transactionData.countryCode || '');
+    const [amountValue, setAmountValue] = useState(quote?.sourceAmount?.amount ? String(Number(quote.sourceAmount.amount)) : '100');
+    const [amountType, setAmountType] = useState(quote?.amountType || 'NET');
+    const [loading, setLoading] = useState(false);
+    const [quoteError, setQuoteError] = useState(null);
 
-    // Initial load
-    useEffect(() => {
+    const loadDestinations = useCallback(() => {
         request('get', '/destinations')
-            .then(data => {
-                const list = data.countryDestinations || (Array.isArray(data) ? data : []) || [];
+            .then((data) => {
+                const list = data.countryDestinations || (Array.isArray(data) ? data : []);
                 setDestinations(list);
-                if (list.length > 0) {
-                    // Default to first usually, or specific like Argentina in Screenshot
-                    const defaultDest = list.find(d => d.country === 'AR') || list[0];
-                    setCountryCode(defaultDest.country);
-                    setCurrency(defaultDest.currency || defaultDest.code);
-                }
+                setCountryCode((current) => (list.length && !list.some((d) => d.country === current) ? list[0].country : current));
             })
-            .catch(console.error)
+            .catch((err) => setDestError(errorMessage(err, 'Could not load destinations')))
             .finally(() => setLoadingDest(false));
     }, []);
 
-    // State to track if current input has been quoted
-    const [quoteError, setQuoteError] = useState(null);
+    const retryDestinations = () => { setLoadingDest(true); setDestError(null); loadDestinations(); };
 
-    // Reset quote when inputs change
-    useEffect(() => {
-        setTransactionData(prev => ({ ...prev, quote: null }));
-    }, [amount, currency, amountType, setTransactionData]);
+    useEffect(() => { loadDestinations(); }, [loadDestinations]);
+
+    const destination = destinations.find((d) => d.country === countryCode);
+    const currency = destination?.currency;
+
+    // A new amount only invalidates the quote; a new country also invalidates beneficiary and account.
+    const invalidate = () => setTransactionData((prev) => ({ ...prev, quote: null }));
+    const invalidateCountry = () => setTransactionData((prev) => ({ ...prev, quote: null, beneficiary: null, account: null }));
+
+    // Resume from the first step that has no data yet (the flow may have been started from the sidebar).
+    const nextStep = !transactionData.beneficiary
+        ? '/beneficiaries'
+        : !transactionData.account
+            ? `/beneficiaries/${transactionData.beneficiary.id}/account`
+            : !transactionData.paymentMethod
+                ? '/payment'
+                : '/transaction/review';
+    const nextLabel = !transactionData.beneficiary ? 'Choose beneficiary' : 'Continue';
 
     const handleGetQuote = async () => {
-        if (!amount || !currency) return;
+        if (!amountValue || !currency) return;
         setLoading(true);
         setQuoteError(null);
         try {
-            const res = await request('post', '/quotes', {
-                userId: user.id || user.userId,
-                fromCurrency: 'USD',
-                toCurrency: currency,
-                amount,
-                amountType
-            });
-            const quote = res.quotes ? res.quotes[0] : (res.id ? res : null);
-            if (quote) {
-                setTransactionData(prev => ({ ...prev, quote }));
-            } else {
-                setQuoteError('No quote available.');
-            }
+            const res = await request('post', '/quotes', { fromCurrency: 'USD', toCurrency: currency, amount: amountValue, amountType });
+            const q = res.quotes ? res.quotes[0] : res.id ? res : null;
+            if (!q) throw new Error('No quote returned for this corridor.');
+            setTransactionData((prev) => ({ ...prev, quote: q, countryCode }));
         } catch (err) {
-            console.error(err);
-            setQuoteError(err.message || 'Failed to get quote');
+            setQuoteError(errorMessage(err, 'Failed to get a quote'));
         } finally {
             setLoading(false);
         }
     };
 
-    const handleProceed = () => {
-        if (!transactionData?.quote) return;
-        // Ensuring countryCode is passed to beneficiaries for Schema loading
-        navigate('/beneficiaries', { state: { countryCode } });
-    };
-
-    const handleCountryChange = (e) => {
-        const code = e.target.value.toUpperCase();
-        setCountryCode(code);
-        const dest = destinations.find(d => d.country === code);
-        if (dest) setCurrency(dest.currency || dest.code);
-    }
-
-    const quoteValue = transactionData?.quote?.destinationAmount?.amount || '';
+    const canProceed = !!quote && !countdown.expired && !loading;
 
     return (
-        <div className="dashboard-page fade-in">
-            <div className="welcome-header mb-8">
-                <h1 className="text-secondary text-3xl font-light mb-2">Welcome!</h1>
-                <p className="text-xl text-gray-500 font-light">
-                    {transactionData?.quote ? (
-                        <>The current exchange rate to <span className="font-bold text-black">{countryCode}</span> is <span className="font-bold text-black">1 USD = {transactionData.quote.effectiveRate} {currency}</span></>
-                    ) : (
-                        `Select country and amount to get a quote.`
-                    )}
-                </p>
-            </div>
+        <div>
+            <PageHeader
+                kicker={`Hi ${user?.firstName || 'there'}`}
+                title="Send money"
+                description="Pick a destination, enter an amount and lock today's rate."
+            />
 
-            <div className="enter-amount-section">
-                <h2 className="text-gray-500 font-normal text-2xl mb-2">Enter amount</h2>
-                <p className="text-gray-400 text-sm mb-6">Send money securely and fast.</p>
+            {!hasProfile && (
+                <Alert tone="warning" className="mb-6" title="Your sender profile is incomplete" action={<Button as={Link} to="/profile" size="sm" variant="secondary">Complete profile</Button>}>
+                    Inyo requires a verified sender (compliance level 1) before a transaction can be created.
+                </Alert>
+            )}
 
-                <div className="form-group mb-4">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">COUNTRY</label>
-                    <select
-                        value={countryCode}
-                        onChange={handleCountryChange}
-                        className="w-full p-3 border border-gray-300 rounded text-lg bg-white appearance-none"
-                    >
-                        {destinations.map(d => (
-                            <option key={d.country} value={d.country}>{d.countryName}</option>
-                        ))}
-                    </select>
-                </div>
+            {destError && (
+                <Alert tone="danger" className="mb-6" title="Destinations unavailable" action={<Button size="sm" variant="secondary" icon={RefreshCw} onClick={retryDestinations}>Retry</Button>}>
+                    {destError}
+                </Alert>
+            )}
 
-                <div className="form-group mb-4">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">FX TYPE</label>
-                    <div className="flex gap-4 p-3 border border-gray-300 rounded bg-white">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="fxType"
-                                value="NET"
-                                checked={amountType === 'NET'}
-                                onChange={e => setAmountType(e.target.value)}
-                                className="w-5 h-5 text-primary"
-                            />
-                            <span className="font-medium">NET</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="fxType"
-                                value="GROSS"
-                                checked={amountType === 'GROSS'}
-                                onChange={e => setAmountType(e.target.value)}
-                                className="w-5 h-5 text-primary"
-                            />
-                            <span className="font-medium">GROSS</span>
-                        </label>
+            <Card>
+                <CardBody className="space-y-6">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                        <Field
+                            label="Destination country"
+                            name="country"
+                            value={countryCode}
+                            onChange={(e) => { setCountryCode(e.target.value); invalidateCountry(); }}
+                            options={destinations.map((d) => ({ value: d.country, label: `${d.emoji ? `${d.emoji} ` : ''}${d.countryName} (${d.currency})` }))}
+                            placeholder={loadingDest ? 'Loading destinations…' : 'Select a country'}
+                            disabled={loadingDest || !destinations.length}
+                            required
+                        />
+                        <Field
+                            label="You send"
+                            name="amount"
+                            type="number"
+                            inputMode="decimal"
+                            min="1"
+                            step="0.01"
+                            value={amountValue}
+                            onChange={(e) => { setAmountValue(e.target.value); invalidate(); }}
+                            suffix="USD"
+                            required
+                        />
                     </div>
-                </div>
 
-                <div className="amount-inputs flex flex-col md:flex-row md:items-end gap-4 mb-4">
-                    <div className="input-wrap w-full md:flex-1 relative">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">YOU SEND</label>
-                        <div className="relative">
-                            <input
-                                type="number"
-                                value={amount}
-                                onChange={e => setAmount(e.target.value)}
-                                className="w-full p-4 border border-gray-300 rounded text-xl"
-                                placeholder="100.00"
-                            />
-                            <span className="currency-tag absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 font-bold">USD</span>
+                    <div>
+                        <p className="mb-1.5 text-sm font-medium text-ink-700">Fee handling</p>
+                        <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Amount type">
+                            {AMOUNT_TYPES.map((t) => {
+                                const active = amountType === t.value;
+                                return (
+                                    <button
+                                        key={t.value}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={active}
+                                        onClick={() => { setAmountType(t.value); invalidate(); }}
+                                        className={cx(
+                                            'rounded-xl border px-4 py-3 text-left transition-all',
+                                            active ? 'border-brand-500 bg-brand-50 ring-4 ring-brand-500/10' : 'border-ink-200 bg-white hover:border-ink-300',
+                                        )}
+                                    >
+                                        <p className={cx('text-sm font-semibold', active ? 'text-brand-700' : 'text-ink-800')}>{t.label} <span className="font-mono text-[11px] font-medium text-ink-400">{t.value}</span></p>
+                                        <p className="mt-0.5 text-xs text-ink-500">{t.hint}</p>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
-                    <div className="mb-1 w-full md:w-auto">
-                        <button
-                            onClick={handleGetQuote}
-                            disabled={loading || !amount}
-                            className={`btn w-full md:w-auto px-6 py-4 rounded font-bold transition-all ${loading || !amount ? 'bg-gray-200 text-gray-400' : 'bg-primary text-white hover:bg-primary-dark'}`}
-                            style={{ height: '58px' }} // Match input height roughly
-                        >
-                            {loading ? '...' : 'Quote'}
-                        </button>
-                    </div>
+                    {quoteError && <Alert tone="danger">{quoteError}</Alert>}
 
-                    <div className="input-wrap w-full md:flex-1 relative">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">THEY RECEIVE</label>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                readOnly
-                                value={quoteValue}
-                                className="w-full p-4 border border-gray-300 rounded text-xl bg-gray-50"
-                                placeholder="..."
-                            />
-                            <span className="currency-tag absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 font-bold">{currency}</span>
+                    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-ink-400">Quotes are not cached and expire. The rate shown is the one applied to the transaction.</p>
+                        <Button onClick={handleGetQuote} loading={loading} disabled={!amountValue || !currency} variant={quote ? 'secondary' : 'primary'} icon={quote ? RefreshCw : Sparkles}>
+                            {quote ? 'Refresh quote' : 'Get quote'}
+                        </Button>
+                    </div>
+                </CardBody>
+            </Card>
+
+            {quote && (
+                <Card className="mt-6 overflow-hidden animate-fade-up">
+                    <div className="grid sm:grid-cols-[1.2fr_1fr]">
+                        <div className="bg-gradient-to-br from-ink-900 to-ink-800 p-6 text-white">
+                            <p className="kicker text-ink-400">Beneficiary receives</p>
+                            <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight">{amount(quote.destinationAmount?.amount, quote.destinationAmount?.currency)}</p>
+                            <p className="mt-2 text-sm text-ink-300">{rate(quote.effectiveRate, quote.sourceAmount?.currency, quote.destinationAmount?.currency)}</p>
+                            <div
+                                className={cx(
+                                    'mt-5 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold',
+                                    countdown.expired ? 'bg-danger-500/20 text-danger-100' : countdown.warning ? 'bg-warning-500/20 text-warning-100' : 'bg-white/10 text-ink-200',
+                                )}
+                            >
+                                <Clock className="size-3.5" />
+                                {countdown.expired ? 'Quote expired' : `Rate locked for ${countdown.remainingLabel}`}
+                            </div>
+                        </div>
+                        <div className="p-6">
+                            <dl className="divide-y divide-ink-100 text-sm">
+                                <div className="flex justify-between py-2"><dt className="text-ink-500">You send</dt><dd className="font-semibold tabular-nums">{money(quote.sourceAmount?.amount, quote.sourceAmount?.currency)}</dd></div>
+                                <div className="flex justify-between py-2"><dt className="text-ink-500">Transfer fee</dt><dd className="font-semibold tabular-nums">{money(quote.fee?.amount, quote.fee?.currency)}</dd></div>
+                                <div className="flex justify-between py-2"><dt className="font-semibold text-ink-900">Total to pay</dt><dd className="text-base font-bold tabular-nums text-ink-900">{money(quote.totalCost?.amount, quote.totalCost?.currency)}</dd></div>
+                            </dl>
+                            <Button className="mt-5 w-full" size="lg" iconRight={ArrowRight} disabled={!canProceed} onClick={() => navigate(nextStep, { state: { countryCode } })}>
+                                {nextLabel}
+                            </Button>
+                            {countdown.expired && <p className="mt-2 text-center text-xs text-danger-600">This quote expired. Refresh it to continue.</p>}
                         </div>
                     </div>
-                </div>
-
-                {quoteError && <p className="text-red-500 mb-4">{quoteError}</p>}
-
-                <div className="flex justify-end" style={{ marginTop: '3rem' }}>
-                    <button
-                        onClick={handleProceed}
-                        disabled={!transactionData?.quote || loading}
-                        className={`btn px-8 py-3 text-lg rounded-full transition-all ${!transactionData?.quote ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'btn-success text-white'}`}
-                        style={transactionData?.quote ? { background: 'var(--color-success)' } : {}}
-                    >
-                        Next
-                    </button>
-                    <style>{`
-                        .welcome-header h1 { color: var(--color-success); font-weight: 300; font-size: 40px; }
-                     `}</style>
-                </div>
-            </div>
+                </Card>
+            )}
         </div>
     );
 };

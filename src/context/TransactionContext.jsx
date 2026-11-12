@@ -1,19 +1,23 @@
-import React, { createContext, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { TransactionContext } from './transaction';
 
-export const TransactionContext = createContext();
+const EMPTY = {
+    countryCode: null,
+    quote: null,
+    beneficiary: null,
+    account: null,
+    paymentMethod: null,
+};
 
+/**
+ * Holds the in-progress "send money" flow:
+ * amount/quote -> beneficiary -> beneficiary account -> funding account -> review.
+ */
 export const TransactionProvider = ({ children }) => {
-    const [transactionData, setTransactionData] = useState({
-        amount: 0,
-        currency: 'USD',
-        quote: null,
-        beneficiary: null,
-        paymentMethod: null
-    });
+    const [transactionData, setTransactionData] = useState(EMPTY);
+    const resetTransaction = useCallback(() => setTransactionData(EMPTY), []);
 
-    return (
-        <TransactionContext.Provider value={{ transactionData, setTransactionData }}>
-            {children}
-        </TransactionContext.Provider>
-    );
+    const value = useMemo(() => ({ transactionData, setTransactionData, resetTransaction }), [transactionData, resetTransaction]);
+
+    return <TransactionContext.Provider value={value}>{children}</TransactionContext.Provider>;
 };

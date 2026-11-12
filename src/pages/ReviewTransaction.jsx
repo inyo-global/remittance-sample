@@ -1,128 +1,135 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useContext, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Clock, CreditCard, Landmark, Lock, Pencil, UserRound } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import { Card, CardBody, CardFooter } from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
 import { request } from '../api';
-import { TransactionContext } from '../context/TransactionContext';
+import { TransactionContext } from '../context/transaction';
+import useQuoteCountdown from '../lib/useQuoteCountdown';
+import { amount, errorMessage, humanize, maskAccount, money, rate } from '../lib/format';
+import { methodSubtitle, methodTitle } from '../lib/paymentMethods';
+import { cx } from '../lib/cx';
 
-const ReviewTransaction = ({ user }) => {
+function Section({ icon: Icon, label, title, subtitle, editTo }) {
     const navigate = useNavigate();
-    const { transactionData } = useContext(TransactionContext);
+    return (
+        <div className="flex items-center gap-4 py-4">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-ink-100 text-ink-600">
+                <Icon className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+                <p className="kicker">{label}</p>
+                <p className="truncate font-semibold text-ink-900">{title}</p>
+                {subtitle && <p className="truncate text-sm text-ink-500">{subtitle}</p>}
+            </div>
+            <button type="button" onClick={() => navigate(editTo)} className="flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50">
+                <Pencil className="size-3" /> Change
+            </button>
+        </div>
+    );
+}
+
+/**
+ * Step 5: review and POST /fx/transactions. All money values come from the quote
+ * (sourceAmount, fee, totalCost, destinationAmount); nothing is recomputed here.
+ */
+const ReviewTransaction = () => {
+    const navigate = useNavigate();
+    const { transactionData, setTransactionData } = useContext(TransactionContext);
     const { beneficiary, account, paymentMethod, quote } = transactionData;
-
+    const countdown = useQuoteCountdown(quote);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
 
-    // Redirect if missing data
-    useEffect(() => {
-        if (!beneficiary || !account || !paymentMethod || !quote) {
-            // alert('Missing transaction information. Please restart.');
-            // navigate('/dashboard');
-        }
-    }, [beneficiary, account, paymentMethod, quote, navigate]);
+    const missing = [!quote && 'a quote', !beneficiary && 'a beneficiary', !account && 'a delivery account', !paymentMethod && 'a payment method'].filter(Boolean);
 
     const handleConfirm = async () => {
         setLoading(true);
+        setError(null);
         try {
             const res = await request('post', '/transactions', {
-                userId: user.id || user.userId,
-                beneficiaryId: beneficiary?.id,
-                accountId: account?.id,
-                paymentMethodId: paymentMethod?.id,
-                quoteId: quote?.quoteId || quote?.id
+                beneficiaryId: beneficiary.id,
+                accountId: account.id,
+                paymentMethodId: paymentMethod.id,
+                quoteId: quote.id || quote.quoteId,
             });
-
-            if (res.id) {
-                // alert(`Transaction Successful! Status: ${res.status}`);
-                navigate('/transaction/receipt', {
-                    state: {
-                        transaction: res
-                    }
-                });
-            } else {
-                throw new Error("No ID returned");
-            }
+            if (!res.id) throw new Error('The API did not return a transaction id.');
+            setTransactionData((prev) => ({ ...prev, quote: null, beneficiary: null, account: null, paymentMethod: null }));
+            navigate('/transaction/receipt', { state: { transaction: res }, replace: true });
         } catch (err) {
-            console.error(err);
-            alert('Transaction Failed: ' + (err.response?.data?.error || err.message));
+            setError(errorMessage(err, 'Transaction failed'));
         } finally {
             setLoading(false);
         }
     };
 
-    if (!quote) return <div className="p-8 text-center">Loading transaction details...</div>;
+    if (missing.length) {
+        return (
+            <div>
+                <PageHeader kicker="Step 5 of 5" title="Review" />
+                <Alert
+                    tone="warning"
+                    title="This transfer is incomplete"
+                    action={<Button as={Link} to={!quote ? '/dashboard' : !beneficiary ? '/beneficiaries' : !account ? `/beneficiaries/${beneficiary.id}/account` : '/payment'} size="sm" variant="secondary">{!quote ? 'Lock a quote' : 'Complete step'}</Button>}
+                >
+                    Missing {missing.join(', ')}. {!quote ? 'Lock a quote on the Amount step; your beneficiary and payment selections are kept.' : 'Go back through the steps to complete it.'}
+                </Alert>
+            </div>
+        );
+    }
+
+    const pm = account.data?.payoutMethod || {};
+    const beneficiaryName = beneficiary.nickname || [beneficiary.data?.firstName, beneficiary.data?.lastName].filter(Boolean).join(' ');
 
     return (
-        <div className="review-page fade-in">
-            <div className="header-section mb-6">
-                <h1 className="text-secondary text-3xl font-light mb-2">Summary</h1>
-                <p className="text-gray-400">Review your transaction details.</p>
-            </div>
+        <div>
+            <PageHeader kicker="Step 5 of 5" title="Review your transfer" description="Check everything before we submit it to Inyo. The locked rate and fee below are exactly what will be charged." />
 
-            <div className="summary-card bg-white p-6 rounded shadow-sm border border-gray-100 mb-6">
-                <div className="flex justify-between items-center border-b pb-4 mb-4">
-                    <div>
-                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">RECIPIENT</span>
-                        <h3 className="text-lg font-bold text-gray-700">{beneficiary?.nickname || beneficiary?.data?.firstName}</h3>
-                        <p className="text-gray-500 text-sm">
-                            {account?.data?.payoutMethod?.bankCode} • {account?.data?.payoutMethod?.accountNumber}
-                        </p>
+            <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+                <Card>
+                    <CardBody className="divide-y divide-ink-100 py-1">
+                        <Section icon={UserRound} label="Beneficiary" title={beneficiaryName} subtitle={beneficiary.data?.address?.countryCode || beneficiary.data?.documents?.[0]?.countryCode} editTo="/beneficiaries" />
+                        <Section
+                            icon={Landmark}
+                            label="Delivery"
+                            title={pm.type === 'PIX' ? `PIX · ${pm.keyType || ''}` : `${humanize(pm.type || 'BANK_DEPOSIT')}${pm.bankCode ? ` · ${pm.bankCode}` : ''}`}
+                            subtitle={pm.type === 'PIX' ? pm.key : `${pm.accountType || ''} ${maskAccount(pm.accountNumber || pm.walletId)} · ${account.data?.asset || ''}`}
+                            editTo={`/beneficiaries/${beneficiary.id}/account`}
+                        />
+                        <Section icon={CreditCard} label="Pay with" title={methodTitle(paymentMethod)} subtitle={methodSubtitle(paymentMethod)} editTo="/payment" />
+                    </CardBody>
+                </Card>
+
+                <Card className="overflow-hidden">
+                    <div className="bg-gradient-to-br from-brand-600 to-brand-800 p-6 text-white">
+                        <p className="kicker text-brand-100">Beneficiary receives</p>
+                        <p className="mt-1 text-3xl font-bold tabular-nums">{amount(quote.destinationAmount?.amount, quote.destinationAmount?.currency)}</p>
+                        <p className="mt-1 text-sm text-brand-100">{rate(quote.effectiveRate, quote.sourceAmount?.currency, quote.destinationAmount?.currency)}</p>
                     </div>
-                    <button className="text-primary text-sm font-bold" onClick={() => navigate('/beneficiaries')}>Edit</button>
-                </div>
-
-                <div className="flex justify-between items-center border-b pb-4 mb-4">
-                    <div>
-                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">PAYMENT METHOD</span>
-                        <div className="flex items-center gap-2">
-                            <span>{paymentMethod?.type === 'ACH' ? '🏦' : '💳'}</span>
-                            <span className="text-gray-700 font-bold capitalize">
-                                {paymentMethod?.type === 'ACH' ? (paymentMethod?.nickname || 'Bank Account') : (paymentMethod?.token?.schemeId || 'Card')}
-                            </span>
-                            <span className="text-gray-500 text-sm">
-                                {paymentMethod?.type === 'ACH'
-                                    ? `•••• ${paymentMethod?.token?.accountNumber ? paymentMethod.token.accountNumber.slice(-4) : ''}`
-                                    : `•••• ${paymentMethod?.token?.lastFourDigits || ''}`
-                                }
-                            </span>
+                    <CardBody>
+                        <dl className="divide-y divide-ink-100 text-sm">
+                            <div className="flex justify-between py-2.5"><dt className="text-ink-500">You send</dt><dd className="font-semibold tabular-nums">{money(quote.sourceAmount?.amount, quote.sourceAmount?.currency)}</dd></div>
+                            <div className="flex justify-between py-2.5"><dt className="text-ink-500">Transfer fee</dt><dd className="font-semibold tabular-nums">{money(quote.fee?.amount, quote.fee?.currency)}</dd></div>
+                            <div className="flex justify-between py-2.5"><dt className="text-ink-500">Amount type</dt><dd className="font-mono text-xs font-semibold text-ink-700">{quote.amountType || 'NET'}</dd></div>
+                            <div className="flex justify-between py-3"><dt className="text-base font-bold text-ink-900">Total to pay</dt><dd className="text-xl font-bold tabular-nums text-ink-900">{money(quote.totalCost?.amount, quote.totalCost?.currency)}</dd></div>
+                        </dl>
+                        <div className={cx('mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium', countdown.expired ? 'bg-danger-50 text-danger-700' : countdown.warning ? 'bg-warning-50 text-warning-700' : 'bg-ink-100 text-ink-600')}>
+                            <Clock className="size-3.5" />
+                            {countdown.expired ? 'This quote expired. Get a new one.' : `Rate locked for ${countdown.remainingLabel}`}
                         </div>
-                    </div>
-                    <button className="text-primary text-sm font-bold" onClick={() => navigate('/payment')}>Edit</button>
-                </div>
-
-                <div className="totals-section mt-6">
-                    <div className="flex justify-between mb-2">
-                        <span className="text-gray-500">Sending Amount</span>
-                        <span className="font-bold">{quote.sourceAmount?.amount} {quote.sourceAmount?.currency}</span>
-                    </div>
-                    <div className="flex justify-between mb-2">
-                        <span className="text-gray-500">Fee</span>
-                        <span className="font-bold">{quote.totalCost?.amount} {quote.totalCost?.currency}</span>
-                    </div>
-                    <div className="flex justify-between mb-4">
-                        <span className="text-gray-500">Exchange Rate</span>
-                        <span className="font-bold text-success">{quote.effectiveRate}</span>
-                    </div>
-                    <hr className="mb-4" />
-                    <div className="flex justify-between items-center">
-                        <span className="text-lg font-bold text-gray-700">Total to Pay</span>
-                        <span className="text-2xl font-bold text-primary">
-                            {(parseFloat(quote.sourceAmount?.amount) + parseFloat(quote.totalCost?.amount)).toFixed(2)} {quote.sourceAmount?.currency}
-                        </span>
-                    </div>
-                    <div className="flex justify-between items-center mt-2">
-                        <span className="text-lg font-bold text-gray-700">Beneficiary Receives</span>
-                        <span className="text-2xl font-bold text-success">
-                            {quote.destinationAmount?.amount} {quote.destinationAmount?.currency}
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex justify-end gap-4" style={{ marginTop: '3rem' }}>
-                <button onClick={() => navigate(-1)} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
-                    Back
-                </button>
-                <button onClick={handleConfirm} disabled={loading} className="btn btn-next px-8 py-3 text-lg rounded-full" style={{ background: 'var(--color-success)' }}>
-                    {loading ? 'Processing...' : 'Confirm & Send'}
-                </button>
+                        {error && <Alert tone="danger" className="mt-4" title="Transaction not created">{error}</Alert>}
+                    </CardBody>
+                    <CardFooter>
+                        <Button variant="ghost" icon={ArrowLeft} onClick={() => navigate('/payment')}>Back</Button>
+                        {countdown.expired ? (
+                            <Button as={Link} to="/dashboard" variant="secondary">Refresh quote</Button>
+                        ) : (
+                            <Button variant="success" icon={Lock} loading={loading} onClick={handleConfirm}>Confirm and send</Button>
+                        )}
+                    </CardFooter>
+                </Card>
             </div>
         </div>
     );

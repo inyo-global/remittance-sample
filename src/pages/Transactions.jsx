@@ -1,194 +1,131 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeftRight, RefreshCw } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import { Card } from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
+import Spinner from '../components/ui/Spinner';
+import EmptyState from '../components/ui/EmptyState';
+import Alert from '../components/ui/Alert';
+import { useToast } from '../lib/toast';
 import { request } from '../api';
+import { amount, dateOnly, errorMessage, initials, money, timeOnly } from '../lib/format';
+import { TONE_TEXT, complianceTone, payoutTone, transactionSummary } from '../lib/status';
 
 const Transactions = ({ user }) => {
     const navigate = useNavigate();
+    const toast = useToast();
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [syncing, setSyncing] = useState(null);
 
     useEffect(() => {
-        if (user?.userId) {
-            request('get', `/transactions?userId=${user.userId}`)
-                .then(data => setTransactions(data))
-                .catch(err => console.error(err))
-                .finally(() => setLoading(false));
+        let cancelled = false;
+        request('get', '/transactions')
+            .then((data) => !cancelled && setTransactions(data))
+            .catch((err) => !cancelled && setError(errorMessage(err)))
+            .finally(() => !cancelled && setLoading(false));
+        return () => { cancelled = true; };
+    }, [user?.userId]);
+
+    // Polls GET /fx/transactions/{id} through the BFF (webhooks are the production path).
+    const sync = async (e, txn) => {
+        e.stopPropagation();
+        setSyncing(txn.id);
+        try {
+            const updated = await request('get', `/transactions/${txn.id}/sync`);
+            setTransactions((list) => list.map((t) => (t.id === txn.id ? updated : t)));
+            toast.success('Status refreshed', `${updated.data?.complianceStatus || ''} / ${updated.data?.payoutStatus || ''}`);
+        } catch (err) {
+            toast.error('Could not refresh status', errorMessage(err));
+        } finally {
+            setSyncing(null);
         }
-    }, [user]);
-
-    const handleRowClick = (txn) => {
-        // Navigate to receipt
-        // We pass the full transaction object as state, similar to how receipt might expect it
-        // Or if receipt expects 'state.transaction'
-        navigate('/transaction/receipt', { state: { transaction: txn, fromHistory: true } });
     };
-
-    const fmtMoney = (val, currency) => {
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format(val || 0);
-    };
-
-    if (loading) return <div className="loader"></div>;
 
     return (
-        <div className="transactions-page fade-in">
-            <div className="page-header">
-                <h1>Transaction History</h1>
-                <p className="subtitle">Track your recent transfers.</p>
-            </div>
+        <div>
+            <PageHeader kicker="Send money" title="Transactions" description="Every transfer created through this sample, with its compliance and payout status." actions={<Button as={Link} to="/dashboard" icon={ArrowLeftRight}>New transfer</Button>} />
 
-            <div className="transactions-card">
-                {transactions.length === 0 ? (
-                    <div className="empty-state">
-                        <span className="empty-icon">💸</span>
-                        <p>No transactions yet.</p>
-                        <button className="new-txn-btn" onClick={() => navigate('/dashboard')}>Start Transfer</button>
-                    </div>
-                ) : (
-                    <table className="txn-table">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Recipient</th>
-                                <th>Status</th>
-                                <th className="text-right">Amount</th>
+            {error && <Alert tone="danger" className="mb-6">{error}</Alert>}
+
+            {loading ? (
+                <Spinner label="Loading transactions…" />
+            ) : transactions.length === 0 ? (
+                <EmptyState icon={ArrowLeftRight} title="No transfers yet" description="Your transaction history and receipts will show up here." action={<Button as={Link} to="/dashboard">Start a transfer</Button>} />
+            ) : (
+                <Card className="overflow-hidden">
+                    <table className="w-full text-sm">
+                        <thead className="bg-ink-50 text-left">
+                            <tr className="kicker">
+                                <th className="px-5 py-3 font-semibold">Date</th>
+                                <th className="px-5 py-3 font-semibold">Recipient</th>
+                                <th className="hidden px-5 py-3 font-semibold md:table-cell">Status</th>
+                                <th className="px-5 py-3 text-right font-semibold">Amount</th>
+                                <th className="w-12 px-3 py-3" />
                             </tr>
                         </thead>
-                        <tbody>
-                            {transactions.map(txn => (
-                                <tr key={txn.id} onClick={() => handleRowClick(txn)} className="txn-row">
-                                    <td>
-                                        <div className="date-cell">
-                                            <span className="date-main">{new Date(txn.createdAt).toLocaleDateString()}</span>
-                                            <span className="date-sub">{new Date(txn.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div className="recipient-cell">
-                                            <span className="recipient-name">{txn.recipientName}</span>
-                                            <span className="recipient-sub">To Bank Account</span>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <span className={`status-badge ${txn.status?.toLowerCase().replace(/_/g, '-') || 'pending'}`}>
-                                            {txn.status?.replace(/_/g, ' ') || 'Pending'}
-                                        </span>
-                                    </td>
-                                    <td className="text-right">
-                                        <span className="amount-cell">
-                                            {fmtMoney(txn.amount, txn.currency)}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))}
+                        <tbody className="divide-y divide-ink-100">
+                            {transactions.map((txn) => {
+                                const d = txn.data || {};
+                                const summary = transactionSummary(txn);
+                                const recipient = d.recipient?.name || txn.recipientName || '—';
+                                return (
+                                    <tr
+                                        key={txn.id}
+                                        onClick={() => navigate('/transaction/receipt', { state: { transaction: txn, fromHistory: true } })}
+                                        className="cursor-pointer transition-colors hover:bg-brand-50/40"
+                                    >
+                                        <td className="px-5 py-4 align-top">
+                                            <p className="whitespace-nowrap font-medium text-ink-800">{dateOnly(txn.createdAt || d.createdAt)}</p>
+                                            <p className="text-xs text-ink-400">{timeOnly(txn.createdAt || d.createdAt)}</p>
+                                        </td>
+                                        <td className="px-5 py-4 align-top">
+                                            <div className="flex items-center gap-3">
+                                                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">{initials(recipient)}</span>
+                                                <div className="min-w-0">
+                                                    <p className="truncate font-medium text-ink-900">{recipient}</p>
+                                                    <p className="text-xs text-ink-400">
+                                                        {d.receivingAmount ? `receives ${amount(d.receivingAmount.amount, d.receivingAmount.currency)}` : 'Bank deposit'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 md:hidden"><Badge tone={summary.tone} dot>{summary.label}</Badge></div>
+                                        </td>
+                                        <td className="hidden px-5 py-4 align-top md:table-cell">
+                                            <Badge tone={summary.tone} dot>{summary.label}</Badge>
+                                            <div className="mt-1.5 flex flex-wrap gap-1 text-[11px] text-ink-400">
+                                                {d.complianceStatus && <span>Compliance: <span className={`font-medium ${TONE_TEXT[complianceTone(d.complianceStatus)]}`}>{d.complianceStatus}</span></span>}
+                                                {d.payoutStatus && <span>· Payout: <span className={`font-medium ${TONE_TEXT[payoutTone(d.payoutStatus)]}`}>{d.payoutStatus}</span></span>}
+                                            </div>
+                                        </td>
+                                        <td className="px-5 py-4 text-right align-top">
+                                            <p className="whitespace-nowrap font-semibold tabular-nums text-ink-900">{money(txn.amount ?? d.totalAmount?.amount, txn.currency || d.totalAmount?.currency)}</p>
+                                            {d.fee && <p className="hidden text-xs text-ink-400 sm:block">incl. {money(d.fee.amount, d.fee.currency)} fee</p>}
+                                        </td>
+                                        <td className="px-3 py-4 text-right align-top">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => sync(e, txn)}
+                                                disabled={syncing === txn.id}
+                                                className="rounded-full p-2 text-ink-400 hover:bg-ink-100 hover:text-brand-600 disabled:opacity-50"
+                                                title="Refresh status from Inyo"
+                                                aria-label="Refresh status"
+                                            >
+                                                <RefreshCw className={`size-4 ${syncing === txn.id ? 'animate-spin' : ''}`} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
-                )}
-            </div>
-
-            <style>{`
-                .transactions-page {
-                    padding: 20px 0;
-                    color: #333;
-                }
-                .page-header { margin-bottom: 30px; }
-                .page-header h1 { font-size: 28px; color: #111; margin-bottom: 5px; }
-                .subtitle { color: #666; font-size: 14px; }
-
-                .transactions-card {
-                    background: white;
-                    border-radius: 12px;
-                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-                    border: 1px solid #e5e7eb;
-                    overflow: hidden;
-                }
-
-                .txn-table {
-                    width: 100%;
-                    border-collapse: collapse;
-                }
-                .txn-table th {
-                    text-align: left;
-                    padding: 16px 24px;
-                    background: #f9fafb;
-                    color: #6b7280;
-                    font-size: 11px;
-                    text-transform: uppercase;
-                    font-weight: 700;
-                    letter-spacing: 0.5px;
-                    border-bottom: 1px solid #e5e7eb;
-                }
-                .txn-table td {
-                    padding: 16px 24px;
-                    border-bottom: 1px solid #f3f4f6;
-                    vertical-align: middle;
-                }
-                .txn-row {
-                    cursor: pointer;
-                    transition: background 0.2s;
-                }
-                .txn-row:hover {
-                    background: #f8fafc;
-                }
-                .txn-row:last-child td {
-                    border-bottom: none;
-                }
-
-                .date-cell, .recipient-cell {
-                    display: flex;
-                    flex-direction: column;
-                }
-                .date-main { font-size: 13px; font-weight: 600; color: #374151; }
-                .date-sub { font-size: 11px; color: #9ca3af; margin-top: 2px; }
-                
-                .recipient-name { font-size: 14px; font-weight: 600; color: #111; }
-                .recipient-sub { font-size: 11px; color: #9ca3af; }
-
-                .amount-cell { font-size: 14px; font-weight: 700; color: #111; }
-                
-                .text-right { text-align: right; }
-
-                /* Status Badges */
-                .status-badge {
-                    display: inline-block;
-                    padding: 4px 10px;
-                    border-radius: 20px;
-                    font-size: 10px;
-                    font-weight: 700;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                }
-                .status-badge.completed, .status-badge.paid, .status-badge.payout-succeeded {
-                    background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0;
-                }
-                .status-badge.pending, .status-badge.processing, .status-badge.submitted {
-                    background: #fffbeb; color: #d97706; border: 1px solid #fde68a;
-                }
-                .status-badge.failed, .status-badge.declined, .status-badge.rejected {
-                    background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;
-                }
-
-                .empty-state { padding: 60px; text-align: center; color: #6b7280; }
-                .empty-icon { font-size: 40px; display: block; margin-bottom: 15px; opacity: 0.5; }
-                .new-txn-btn {
-                    margin-top: 20px;
-                    background: var(--color-primary);
-                    color: white;
-                    border: none;
-                    padding: 10px 20px;
-                    border-radius: 6px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: opacity 0.2s;
-                }
-                .new-txn-btn:hover { opacity: 0.9; }
-
-                @media (max-width: 768px) {
-                    .txn-table th:nth-child(2), .txn-table td:nth-child(2) {
-                        display: none; /* Hide Recipient on mobile? Or just date */
-                    }
-                }
-            `}</style>
+                </Card>
+            )}
         </div>
     );
 };
+
 export default Transactions;

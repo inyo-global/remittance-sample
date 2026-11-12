@@ -1,240 +1,182 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import Input from '../components/Input';
+import { ArrowLeft, ArrowRight, ChevronRight, Landmark, Plus } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import { Card, CardBody, CardFooter } from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
+import Spinner from '../components/ui/Spinner';
+import Badge from '../components/ui/Badge';
+import EmptyState from '../components/ui/EmptyState';
+import SchemaForm from '../components/SchemaForm';
+import { schemaDefaults } from '../lib/schema';
 import { request } from '../api';
-import { TransactionContext } from '../context/TransactionContext';
+import { TransactionContext } from '../context/transaction';
+import { inTransferFlow } from '../lib/steps';
+import { cx } from '../lib/cx';
+import { errorMessage, maskAccount } from '../lib/format';
 
-const AddAccount = ({ user }) => {
-    const { id } = useParams(); // Beneficiary ID
+const accountTitle = (acc, banks) => {
+    const pm = acc.data?.payoutMethod || {};
+    const bank = banks.find((b) => b.code === pm.bankCode)?.name;
+    if (pm.type === 'PIX') return `PIX · ${pm.keyType || ''}`;
+    if (pm.type === 'WALLET') return pm.walletOperator || 'Wallet';
+    return bank || pm.bankCode || 'Bank account';
+};
+
+const accountSubtitle = (acc) => {
+    const pm = acc.data?.payoutMethod || {};
+    if (pm.type === 'PIX') return pm.key;
+    const number = pm.accountNumber || pm.clabe || pm.walletId;
+    return [pm.accountType, maskAccount(number)].filter(Boolean).join(' · ');
+};
+
+/**
+ * Beneficiary payout account (recipient account). The form is generated from
+ * GET /payout/recipientAccounts/schema/{countryCode}; bank codes come from
+ * GET /payout/{countryCode}/banks.
+ */
+const AddAccount = () => {
+    const { id } = useParams();
     const { state } = useLocation();
     const navigate = useNavigate();
     const { transactionData, setTransactionData } = useContext(TransactionContext);
+
+    const beneficiary = state?.beneficiary || transactionData.beneficiary;
+    const countryCode = (state?.countryCode || beneficiary?.data?.address?.countryCode || beneficiary?.data?.documents?.[0]?.countryCode || transactionData.countryCode || '').toUpperCase();
 
     const [schema, setSchema] = useState(null);
     const [formData, setFormData] = useState({});
     const [banks, setBanks] = useState([]);
     const [accounts, setAccounts] = useState([]);
-    const [view, setView] = useState('loading'); // loading, list, add
+    const [view, setView] = useState('list');
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState(null);
 
-    const countryCode = (state?.countryCode || transactionData.beneficiary?.data?.address?.countryCode || transactionData.beneficiary?.address?.countryCode || 'PE').toUpperCase();
-
-    // Fetch Accounts and Schema
     useEffect(() => {
-        const fetchAll = async () => {
+        let cancelled = false;
+        const load = async () => {
             setLoading(true);
+            setError(null);
             try {
-                // Fetch existing accounts
                 const accountsRes = await request('get', `/beneficiaries/${id}/accounts`);
+                if (cancelled) return;
                 setAccounts(accountsRes);
+                setView(accountsRes.length > 0 ? 'list' : 'add');
 
-                // If we have accounts, show list, otherwise show add form
-                if (accountsRes.length > 0) {
-                    setView('list');
-                } else {
-                    setView('add');
-                }
-
-                // Pre-fetch schema and banks for "add" mode
-                const schemaRes = await request('get', `/beneficiaries/account-schema/${countryCode}`);
+                if (!countryCode) throw new Error('Destination country is unknown for this beneficiary.');
+                const [schemaRes, banksRes] = await Promise.all([
+                    request('get', `/beneficiaries/account-schema/${countryCode}`),
+                    request('get', `/banks/${countryCode}`).catch(() => []),
+                ]);
+                if (cancelled) return;
                 setSchema(schemaRes);
-
-                // Fetch banks
-                const banksRes = await request('get', `/banks/${countryCode}`);
-                if (banksRes.items) {
-                    setBanks(banksRes.items);
-                }
+                setFormData(schemaDefaults(schemaRes));
+                // Docs show a plain array; some tenants return {items:[...]}.
+                setBanks(Array.isArray(banksRes) ? banksRes : banksRes?.items || []);
             } catch (err) {
-                console.error('Error loading data', err);
-                // Fallback to add view if error fetching accounts (or if empty)
-                setView('add');
+                if (!cancelled) setError(errorMessage(err, 'Could not load delivery options'));
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
-        fetchAll();
+        load();
+        return () => { cancelled = true; };
     }, [id, countryCode]);
 
-    const handleNestedChange = (path, value) => {
-        setFormData(prev => {
-            const newState = { ...prev };
-            let current = newState;
-            const keys = path.split('.');
-            const lastKey = keys.pop();
-
-            keys.forEach(key => {
-                const arrayMatch = key.match(/(\w+)\[(\d+)\]/);
-                if (arrayMatch) {
-                    const [_, arrayName, index] = arrayMatch;
-                    if (!current[arrayName]) current[arrayName] = [];
-                    if (!current[arrayName][index]) current[arrayName][index] = {};
-                    current = current[arrayName][index];
-                } else {
-                    if (!current[key]) current[key] = {};
-                    current = current[key];
-                }
-            });
-
-            current[lastKey] = value;
-            return newState;
-        });
-    };
-
-    const getValue = (path) => {
-        let current = formData;
-        const keys = path.split(/\.|\[|\]/).filter(Boolean);
-        for (const key of keys) {
-            if (current === undefined || current === null) return '';
-            current = current[key];
+    const inFlow = inTransferFlow(transactionData);
+    const selectAccount = (account) => {
+        if (!inFlow) {
+            // Managing accounts from the sidebar: nothing to select, go back to the list.
+            navigate('/beneficiaries');
+            return;
         }
-        return current || '';
-    };
-
-    const renderField = (key, prop, path, required = false) => {
-        const fullPath = path ? `${path}.${key}` : key;
-        const isRequired = required;
-
-        if (prop.type === 'object') {
-            return (
-                <div key={fullPath} className="json-form-group border p-4 rounded mb-4 bg-gray-50">
-                    <h4 className="capitalize font-bold mb-2 text-primary">{prop.title || key}</h4>
-                    {Object.keys(prop.properties).map(childKey =>
-                        renderField(childKey, prop.properties[childKey], fullPath, prop.required?.includes(childKey))
-                    )}
-                </div>
-            );
-        }
-
-        if (prop.type === 'array' && prop.items) {
-            return (
-                <div key={fullPath} className="json-form-group border p-4 rounded mb-4 bg-gray-50">
-                    <h4 className="capitalize font-bold mb-2 text-primary">{prop.title || key}</h4>
-                    {Object.keys(prop.items.properties).map(childKey => {
-                        const arrayPath = `${key}[0]`;
-                        return renderField(childKey, prop.items.properties[childKey], arrayPath, prop.items.required?.includes(childKey));
-                    })}
-                </div>
-            );
-        }
-
-        // Determine options
-        let fieldOptions = prop.enum ? prop.enum.map(v => ({ value: v, label: v })) : null;
-
-        // Inject banks if key is bankCode
-        if (key === 'bankCode' && banks.length > 0) {
-            fieldOptions = banks.map(b => ({ value: b.code, label: b.name }));
-        }
-
-        return (
-            <Input
-                key={fullPath}
-                name={fullPath}
-                label={prop.title || key}
-                value={getValue(fullPath)}
-                onChange={(e) => handleNestedChange(fullPath, e.target.value)}
-                required={isRequired}
-                placeholder={prop.description}
-                options={fieldOptions}
-            />
-        );
-    };
-
-    const handleSelectAccount = (account) => {
-        setTransactionData(prev => ({ ...prev, account }));
+        setTransactionData((prev) => ({ ...prev, account }));
         navigate('/payment');
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setLoading(true);
+        setSaving(true);
+        setError(null);
         try {
-            const newAccount = await request('post', '/beneficiaries/account', {
+            const res = await request('post', '/beneficiaries/account', {
                 beneficiaryId: id,
-                externalPersonId: state?.beneficiary?.externalId,
-                formData
+                externalPersonId: beneficiary?.externalId,
+                formData,
             });
-            // Auto Select and Proceed
-            console.log('Account added, auto-selecting:', newAccount);
-            setTransactionData(prev => ({ ...prev, account: newAccount }));
-            navigate('/payment');
+            selectAccount({ id: res.id, externalId: res.externalAccountId, data: formData });
         } catch (err) {
-            alert(err.message);
+            setError(errorMessage(err, 'Failed to add the bank account'));
         } finally {
-            setLoading(false);
+            setSaving(false);
         }
     };
 
+    const optionsFor = (key) => (key === 'bankCode' && banks.length ? banks.map((b) => ({ value: b.code, label: b.name })) : null);
 
+    const name = beneficiary?.nickname || [beneficiary?.data?.firstName, beneficiary?.data?.lastName].filter(Boolean).join(' ') || 'the beneficiary';
 
     return (
-        <div className="add-account-page fade-in">
-            <div className="header-section mb-6 flex justify-between items-center">
-                <div>
-                    <h1 className="text-secondary text-3xl font-light mb-2">Delivery Options</h1>
-                    <p className="text-gray-400">Select a bank account or add a new one.</p>
-                </div>
-                {view === 'list' && (
-                    <button
-                        onClick={() => setView('add')}
-                        className="btn rounded-full px-6 py-2 text-sm font-bold flex items-center gap-2 transition-all hover:shadow-md"
-                        style={{ backgroundColor: '#f3f4f6', color: 'var(--color-primary)' }}
-                    >
-                        <span className="text-xl">+</span> Add New
-                    </button>
-                )}
-            </div>
+        <div>
+            <PageHeader
+                kicker={inFlow ? 'Step 3 of 5' : 'Account'}
+                title="Delivery options"
+                description={inFlow ? `How should ${name} receive the money?` : `Payout accounts registered for ${name}.`}
+                actions={view === 'list' && schema ? <Button variant="secondary" icon={Plus} onClick={() => setView('add')}>Add account</Button> : null}
+            />
 
-            {loading ? <div className="loader"></div> : (
-                view === 'list' ? (
-                    <div className="account-list">
-                        {accounts.map(acc => (
-                            <div
-                                key={acc.id}
-                                onClick={(e) => {
-                                    e.preventDefault();
-                                    console.log('Selecting account:', acc);
-                                    handleSelectAccount(acc);
-                                }}
-                                role="button"
-                                tabIndex={0}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                        handleSelectAccount(acc);
-                                    }
-                                }}
-                                className="bg-white p-4 rounded border border-gray-100 shadow-sm hover:shadow-md cursor-pointer transition-all flex justify-between items-center mb-4"
-                            >
-                                <div className="flex items-center gap-4">
-                                    <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-2xl">
-                                        🏦
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-gray-700">{acc.data?.payoutMethod?.bankCode || 'Bank Account'}</h3>
-                                        <p className="text-sm text-gray-400">
-                                            {acc.data?.payoutMethod?.accountNumber || acc.data?.payoutMethod?.clabe || '****'} • {acc.data?.asset}
-                                        </p>
-                                    </div>
-                                </div>
-                                <span className="text-primary font-bold">Select ›</span>
-                            </div>
-                        ))}
-                    </div>
+            {error && !loading && <Alert tone="danger" className="mb-6">{error}</Alert>}
+
+            {loading ? (
+                <Spinner label="Loading delivery options…" />
+            ) : view === 'list' ? (
+                accounts.length === 0 ? (
+                    <EmptyState icon={Landmark} title="No payout account yet" description="Add a bank account, PIX key or wallet for this beneficiary." action={<Button icon={Plus} onClick={() => setView('add')}>Add account</Button>} />
                 ) : (
-                    <div className="add-form">
-                        <form onSubmit={handleSubmit}>
-                            {schema && schema.properties && Object.keys(schema.properties).map(k => renderField(k, schema.properties[k]))}
-
-                            <div className="flex justify-between" style={{ marginTop: '3rem' }}>
-                                <button type="button" onClick={() => setView('list')} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
-                                    Back
+                    <ul className="grid gap-3 sm:grid-cols-2">
+                        {accounts.map((acc) => (
+                            <li key={acc.id}>
+                                <button
+                                    type="button"
+                                    disabled={!inFlow}
+                                    onClick={() => selectAccount(acc)}
+                                    className={cx('card flex w-full items-center gap-4 p-4 text-left', inFlow && 'group transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-500/20')}
+                                >
+                                    <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink-100 text-ink-600">
+                                        <Landmark className="size-5" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate font-semibold text-ink-900">{accountTitle(acc, banks)}</p>
+                                        <p className="mt-0.5 truncate text-sm text-ink-500">{accountSubtitle(acc)}</p>
+                                        <div className="mt-1.5 flex gap-1.5">
+                                            <Badge tone="brand">{acc.data?.payoutMethod?.type || 'BANK_DEPOSIT'}</Badge>
+                                            {acc.data?.asset && <Badge>{acc.data.asset}</Badge>}
+                                        </div>
+                                    </div>
+                                    {inFlow && <ChevronRight className="size-5 text-ink-300 transition-colors group-hover:text-brand-600" />}
                                 </button>
-                                <button type="submit" className="btn btn-next px-8 py-3 text-lg rounded-full" style={{ background: 'var(--color-success)' }}>
-                                    Save
-                                </button>
-                            </div>
-                        </form>
-                    </div>
+                            </li>
+                        ))}
+                    </ul>
                 )
+            ) : (
+                <form onSubmit={handleSubmit} noValidate>
+                    <Card>
+                        <CardBody>
+                            {schema ? (
+                                <SchemaForm schema={schema} value={formData} onChange={setFormData} optionsFor={optionsFor} hiddenKeys={['externalId']} />
+                            ) : (
+                                <p className="text-sm text-ink-500">The account schema for {countryCode || 'this country'} is unavailable.</p>
+                            )}
+                        </CardBody>
+                        <CardFooter>
+                            <Button variant="ghost" icon={ArrowLeft} onClick={() => (accounts.length ? setView('list') : navigate(-1))}>Back</Button>
+                            <Button type="submit" loading={saving} disabled={!schema} iconRight={ArrowRight}>{inFlow ? 'Save and continue' : 'Save account'}</Button>
+                        </CardFooter>
+                    </Card>
+                </form>
             )}
         </div>
     );
