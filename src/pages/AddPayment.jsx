@@ -1,614 +1,620 @@
-import React, { useState, useEffect, useContext, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, CreditCard, Landmark, Lock, Plus, ShieldCheck, RefreshCw } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import { Card, CardBody, CardFooter } from '../components/ui/Card';
+import Field from '../components/ui/Field';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
+import Spinner from '../components/ui/Spinner';
+import Modal from '../components/ui/Modal';
+import EmptyState from '../components/ui/EmptyState';
+import { useToast } from '../lib/toast';
+import PaymentMethodCard from '../components/PaymentMethodCard';
 import { request } from '../api';
-import { TransactionContext } from '../context/TransactionContext';
+import { TransactionContext } from '../context/transaction';
+import { inTransferFlow } from '../lib/steps';
+import { errorMessage } from '../lib/format';
+import { US_STATES } from '../lib/usStates';
+import { cx } from '../lib/cx';
 
-// Logic:
-// 1. View: 'list' (Select existing).
-// 2. View: 'select-type' (Choose Card vs ACH).
-// 3. View: 'add-card' or 'add-ach' (Specific form).
+const TOKENIZER_SRC = 'https://cdn.simpleps.com/sandbox/inyo.js';
+// Docs (tokenizing-cards, threeDSData): "redirect" sends successUrl/failUrl and the issuer sends the
+// challenge tab there at the end (the BFF landing page reports back to this page); "postmessage" sends
+// enablePostMessage and the result arrives as a window "message" (page URL registered with Inyo first);
+// "off" tokenizes with enable:false and the challenge comes from POST /fundingAccounts (ActionRequired).
+const TOKENIZER_3DS_MODE = 'off';
+// successUrl/failUrl point at the page origin (e.g. http://localhost:3000): the issuer sends the user's
+// browser there at the end of the challenge, so a local host works and APP_URL is not needed here.
+const threeDsData = (mode) => {
+    if (mode === 'redirect') {
+        const origin = window.location.origin;
+        return { enable: true, successUrl: `${origin}/api/3ds/success`, failUrl: `${origin}/api/3ds/fail` };
+    }
+    if (mode === 'postmessage') return { enable: true, enablePostMessage: true };
+    return { enable: false };
+};
+const PLAID_SRC = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+
+const loadScript = (src) =>
+    new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[src="${src}"]`);
+        if (existing) {
+            if (existing.dataset.loaded) return resolve();
+            existing.addEventListener('load', () => resolve());
+            existing.addEventListener('error', reject);
+            return undefined;
+        }
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = () => { script.dataset.loaded = '1'; resolve(); };
+        script.onerror = reject;
+        document.body.appendChild(script);
+        return undefined;
+    });
+
+const EMPTY_BILLING = { address1: '', address2: '', city: '', state: '', zipcode: '' };
+
+/**
+ * Step 4: choose or add a funding account.
+ *  - Cards are tokenized in the browser by inyo.js, then registered via POST /fundingAccounts.
+ *    status "ActionRequired" opens the 3DS challenge (redirectAcsUrl) in an iframe; the result
+ *    arrives through postMessage and is confirmed server-side (GET /payout/fundingAccounts/{id}).
+ *  - ACH uses Plaid Link: link token from the BFF, then public_token + account_id to Inyo.
+ */
 const AddPayment = ({ user }) => {
     const navigate = useNavigate();
     const location = useLocation();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const toast = useToast();
     const { transactionData, setTransactionData } = useContext(TransactionContext);
+    const inFlow = inTransferFlow(transactionData);
 
     const [methods, setMethods] = useState([]);
     const [loading, setLoading] = useState(true);
-    // Views: 'list', 'select-type', 'add-card', 'add-ach'
+    const [busy, setBusy] = useState(false);
     const [view, setView] = useState(location.state?.forceAdd ? 'select-type' : 'list');
+    const [error, setError] = useState(null);
 
-    // State for the tokenizer instance
-    const [tokenizer, setTokenizer] = useState(null);
+    const [billing, setBilling] = useState(EMPTY_BILLING);
+    const [useProfileAddress, setUseProfileAddress] = useState(false);
+    const [cardErrors, setCardErrors] = useState({});
+    const tokenizerRef = useRef(null);
+    const tokenizeTimer = useRef(null);
+    // inyo.js registers a window "message" listener per instance and never removes it, so instances
+    // created on earlier visits to this view keep firing GATEWAY_ERROR for unrelated postMessages.
+    // Only the callbacks of a tokenization we started are honoured.
+    const tokenizing = useRef(false);
+    const errorRef = useRef(null);
+    const billingRef = useRef(billing);
+    billingRef.current = billing;
+
+    // Bring the error into view: the add-card form is long and the message sits below it.
+    useEffect(() => {
+        if (error) errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, [error]);
+
+    const settleTokenizer = () => {
+        if (tokenizeTimer.current) clearTimeout(tokenizeTimer.current);
+        tokenizeTimer.current = null;
+        tokenizing.current = false;
+    };
+
     const [challengeUrl, setChallengeUrl] = useState(null);
     const [pendingCardId, setPendingCardId] = useState(null);
+    const [pendingPaymentId, setPendingPaymentId] = useState(null);
+    // Redirect mode runs the challenge in a separate tab: at the end the issuer navigates that whole
+    // tab to successUrl/failUrl, which cannot happen inside an iframe. The tab is opened on the click
+    // (before the async registration) so popup blockers allow it, then pointed at redirectAcsUrl.
+    const [challengeTab, setChallengeTab] = useState(false);
+    const challengeWin = useRef(null);
+    const challengeOpen = !!challengeUrl || challengeTab;
+    // Which 3DS mode the card is tokenized with (see THREE_DS_MODES above).
+    const [threeDsMode, setThreeDsMode] = useState(TOKENIZER_3DS_MODE);
+    const threeDsModeRef = useRef(threeDsMode);
+    threeDsModeRef.current = threeDsMode;
+    const [notice, setNotice] = useState(null);
 
     const fetchMethods = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await request('get', `/payment-methods?userId=${user.id || user.userId}`);
-            setMethods(res);
+            setMethods(await request('get', '/payment-methods'));
         } catch (err) {
-            console.error(err);
+            setError(errorMessage(err));
         } finally {
             setLoading(false);
         }
-    }, [user]);
+    }, []);
 
-    useEffect(() => {
-        fetchMethods();
-    }, [fetchMethods]);
+    useEffect(() => { fetchMethods(); }, [fetchMethods]);
 
     const handleSelect = (method) => {
-        setTransactionData(prev => ({ ...prev, paymentMethod: method }));
+        // Outside the send flow this page only manages funding accounts; nothing to select.
+        if (!inFlow) {
+            navigate('/payment-methods');
+            return;
+        }
+        setTransactionData((prev) => ({ ...prev, paymentMethod: method }));
         navigate('/transaction/review');
     };
 
-    // Load Script
-    useEffect(() => {
-        if (view === 'add-ach') {
-            const PLAID_SCRIPT = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
-            if (!document.querySelector(`script[src="${PLAID_SCRIPT}"]`)) {
-                const script = document.createElement("script");
-                script.src = PLAID_SCRIPT;
-                script.async = true;
-                document.body.appendChild(script);
-            }
-        }
-
-        if (view === 'add-card') {
-            const SCRIPT_SRC = "https://cdn.simpleps.com/sandbox/inyo.js";
-
-            const initTokenizer = () => {
-                if (window.InyoTokenizer) {
-                    console.log("AddPayment: Initializing InyoTokenizer...");
-                    try {
-                        const t = new window.InyoTokenizer({
-                            targetId: '#payment-form-container', // Wrapper ID
-                            storeLaterUse: true,
-                            publicKey: import.meta.env.VITE_PUBLIC_KEY,
-                            threeDSData: {
-                                enable: true, // As per sample
-                                enablePostMessage: true
-                            },
-                            successCallback: (resp) => handleSuccess(resp),
-                            errorCallback: (resp) => handleError(resp)
-                        });
-                        setTokenizer(t);
-                    } catch (e) {
-                        console.error("AddPayment: Tokenizer init failed", e);
-                    }
-                } else {
-                    console.warn("AddPayment: window.InyoTokenizer missing.");
-                }
-            };
-
-            const loadScript = () => {
-                if (document.querySelector(`script[src="${SCRIPT_SRC}"]`)) {
-                    initTokenizer();
-                    return;
-                }
-                const script = document.createElement("script");
-                script.src = SCRIPT_SRC;
-                script.async = true;
-                script.onload = initTokenizer;
-                document.body.appendChild(script);
-            };
-
-            loadScript();
-        }
-    }, [view]); // Re-init if 3DS requirement changes
-
-    const updateCardStatus = useCallback(async () => {
-        if (!pendingCardId) return;
+    /* ---------- Card: tokenizer ---------- */
+    const registerCard = useCallback(async (tokenData) => {
+        setBusy(true);
+        setError(null);
         try {
-            console.log("Updating card status for:", pendingCardId);
-            // We call sync to pull latest status from backend/gateway
-            const res = await request('get', `/payment-methods/${pendingCardId}/sync`);
-
-            if (res.status === 'Verified' || res.status === 'Active' || res.status === '00' || res.status === 'APPROVED' || res.status === 'AUTHORIZED') {
-                setChallengeUrl(null);
-                setPendingCardId(null);
-                await fetchMethods();
-                setView('list');
-            } else {
-                // If sync didn't find it verified yet, but we got a success 3DS message,
-                // we might want to allow it or tell user it's processing.
-                // For now, let's assume sync catches it.
-                // If not, we might alert? 
-                // User said: "backend should leave a comment to verify the card via webhook"
-                // This implies we might just close and show list, or show a 'pending' state?
-                // Let's close and go to list, assuming webhook acts later if sync failed.
-                setChallengeUrl(null);
-                setPendingCardId(null);
-                await fetchMethods();
-                setView('list');
-                alert("Card verified! Status is updating.");
-            }
-        } catch (e) {
-            console.error("Update status error", e);
-            alert("Error updating card status: " + e.message);
-        }
-    }, [pendingCardId, fetchMethods]);
-
-    // Handle 3DS Message
-    useEffect(() => {
-        const handleMessage = (event) => {
-            if (event.data && event.data.response && (event.data.response.paymentId || event.data.response.id)) {
-                const response = event.data.response;
-                console.log("AddPayment: 3DS Response received", response);
-
-                if (response.status == 'AUTHORIZED' && response.cvcResult == 'APPROVED' && response.avsResult == 'APPROVED') {
-                    console.log("3DS Challenge Approved for pending card, syncing...");
-                    updateCardStatus();
-                }
-                else {
-                    console.warn("3DS Verification Failed:", response);
-                    alert("Card verification failed or was declined. Please check details and try again.");
-                    setChallengeUrl(null); // Redirect back to form
-                    setPendingCardId(null); // Keep ID? No, effectively reset.
-                    // view is still 'add-card', so form appears.
-                }
-            }
-        };
-
-        window.addEventListener('message', handleMessage);
-        return () => window.removeEventListener('message', handleMessage);
-    }, [pendingCardId, updateCardStatus]);
-
-
-    const handleSuccess = async (resp) => {
-        console.log("Tokenizer Success:", resp);
-        if (resp.status === '00' && resp.additionalData?.token) {
-            // Collect Billing Address
-            const billingAddress = getBillingAddress();
-
-            // Save to backend
-            try {
-                setLoading(true);
-
-                const res = await request('post', '/payment-methods/cards', {
-                    userId: user.id || user.userId,
-                    token: resp.additionalData,
-                    billingAddress
-                });
-
-                if (res.status === 'ActionRequired' && res.redirectAcsUrl) {
+            const res = await request('post', '/payment-methods/cards', { token: tokenData, billingAddress: billingRef.current, threeDsMode: threeDsModeRef.current });
+            if (res.status === 'ActionRequired' && res.redirectAcsUrl) {
+                setPendingCardId(res.id);
+                setPendingPaymentId(res.gatewayPaymentId || null);
+                const win = challengeWin.current;
+                if (win && !win.closed) {
+                    win.location.replace(res.redirectAcsUrl);
+                    setChallengeTab(true);
+                } else if (threeDsModeRef.current === 'redirect') {
+                    // Popup blocked or closed: fall back to a link the user can click.
+                    setChallengeTab(true);
+                    setChallengeUrl(null);
+                    setNotice(`The challenge tab could not be opened automatically. Open it manually: ${res.redirectAcsUrl}`);
+                } else {
                     setChallengeUrl(res.redirectAcsUrl);
-                    setPendingCardId(res.id);
-                    return;
                 }
+                return;
+            }
+            if (challengeWin.current && !challengeWin.current.closed) challengeWin.current.close();
+            challengeWin.current = null;
+            toast.success('Card added', `Status: ${res.status}`);
+            await fetchMethods();
+            setView('list');
+        } catch (err) {
+            if (challengeWin.current && !challengeWin.current.closed) challengeWin.current.close();
+            challengeWin.current = null;
+            const msg = errorMessage(err, 'Could not register the card');
+            setError(msg);
+            toast.error('Card not added', msg.length > 160 ? `${msg.slice(0, 160)}…` : msg);
+        } finally {
+            setBusy(false);
+        }
+    }, [fetchMethods, toast]);
 
-                // Refresh and switch view
-                await fetchMethods();
-                setView('list');
-            } catch (err) {
-                alert('Error saving card: ' + err.message);
-            } finally {
-                setLoading(false);
+    useEffect(() => {
+        if (view !== 'add-card') return undefined;
+        let disposed = false;
+        const listeners = [];
+        loadScript(TOKENIZER_SRC)
+            .then(() => {
+                if (disposed || !window.InyoTokenizer) return;
+                // Capture the window listeners inyo.js adds in its constructor so they can be removed on cleanup.
+                const originalAdd = window.addEventListener;
+                window.addEventListener = function (type, fn, opts) {
+                    if (type === 'message') listeners.push(fn);
+                    return originalAdd.call(this, type, fn, opts);
+                };
+                try {
+                    tokenizerRef.current = new window.InyoTokenizer({
+                        targetId: '#payment-form-container',
+                        storeLaterUse: true,
+                        publicKey: import.meta.env.VITE_PUBLIC_KEY,
+                        // With the tokenizer's own 3DS enabled, inyo.js expects a redirectUrl in the token
+                        // response and raises GATEWAY_ERROR when there is none. See THREE_DS_MODES above.
+                        threeDSData: threeDsData(threeDsMode),
+                        // Docs: reasonCode WAITING_TRANSACTION + additionalData.token means the token is ready.
+                        successCallback: (resp) => {
+                            if (!tokenizing.current) return;
+                            settleTokenizer();
+                            if (resp.additionalData?.token) {
+                                registerCard(resp.additionalData);
+                            } else {
+                                setBusy(false);
+                                setError(`Tokenizer answered ${resp.reasonCode || resp.status || 'unknown'} without a token.`);
+                            }
+                        },
+                        errorCallback: (resp) => {
+                            if (!tokenizing.current) return;
+                            if (resp.code === 'GATEWAY_ERROR') {
+                                // inyo.js raises GATEWAY_ERROR from two places: its 3DS step when the token
+                                // response has no redirectUrl, and its window "message" listener for any JSON
+                                // postMessage that is not a 3DS success (fingerprint iframes, Plaid, ...). In
+                                // both cases the token itself may already be minted (kept in tokenData). Hand
+                                // it over and let Inyo drive 3DS; with no token yet, keep waiting for the
+                                // real successCallback instead of aborting.
+                                const data = tokenizerRef.current?.tokenData?.additionalData;
+                                if (data?.token) {
+                                    setNotice(`inyo.js reported GATEWAY_ERROR (${resp.message}): the card-token response carried no 3DS data (redirectUrl). The token ···· ${data.lastFourDigits || ''} was issued, so the sample continues and lets Inyo run 3DS.`);
+                                    settleTokenizer();
+                                    registerCard(data);
+                                } else {
+                                    setNotice(`inyo.js reported GATEWAY_ERROR (${resp.message}) before any token was issued. This comes from its window "message" listener reacting to an unrelated postMessage; still waiting for the card-token response.`);
+                                    console.debug('inyo.js GATEWAY_ERROR before token', resp);
+                                }
+                                return;
+                            }
+                            settleTokenizer();
+                            setBusy(false);
+                            const map = { INVALID_PAN: 'pan', INVALID_EXPIRY_DATE: 'expirationDate', INVALID_CVV: 'securitycode', INVALID_CARDHOLDER: 'cardholder' };
+                            setCardErrors(map[resp.code] ? { [map[resp.code]]: resp.message || resp.code } : {});
+                            const msg = resp.message || resp.code || 'Card validation failed';
+                            setError(resp.code && resp.code !== msg ? `${msg} (${resp.code})` : msg);
+                            toast.error('Card not tokenized', msg);
+                        },
+                        });
+                } finally {
+                    window.addEventListener = originalAdd;
+                }
+            })
+            .catch(() => setError('Could not load the Inyo tokenizer script. Check your network and VITE_PUBLIC_KEY.'));
+        return () => {
+            disposed = true;
+            tokenizerRef.current = null;
+            settleTokenizer();
+            listeners.forEach((fn) => window.removeEventListener('message', fn));
+            listeners.length = 0;
+        };
+    }, [view, registerCard, toast, threeDsMode]);
+
+    const handleTokenize = () => {
+        const required = ['address1', 'city', 'state', 'zipcode'];
+        const missing = required.filter((k) => !billing[k]);
+        if (missing.length) {
+            setError('Please complete the billing address.');
+            return;
+        }
+        setError(null);
+        setNotice(null);
+        setCardErrors({});
+        if (!tokenizerRef.current) {
+            setError('Secure tokenizer is not ready yet.');
+            return;
+        }
+        setBusy(true);
+        if (threeDsMode === 'redirect') {
+            // Must happen synchronously in the click handler, or the browser blocks the popup.
+            const win = window.open('', '_blank');
+            if (win) {
+                win.document.write('<!doctype html><title>3D Secure</title><body style="font-family:system-ui;padding:24px;color:#1f2937"><p>Waiting for the card issuer… this tab will show the 3D Secure challenge if your card requires one.</p></body>');
+                challengeWin.current = win;
             }
         }
-        else {
-            alert('Tokenizer processed but status unknown: ' + JSON.stringify(resp));
+        settleTokenizer();
+        tokenizing.current = true;
+        tokenizeTimer.current = setTimeout(() => {
+            tokenizing.current = false;
+            setBusy(false);
+            if (challengeWin.current && !challengeWin.current.closed) challengeWin.current.close();
+            challengeWin.current = null;
+            setError('No answer from the tokenizer after 45 seconds. Check the card-token request in the browser network tab.');
+        }, 45000);
+        try {
+            tokenizerRef.current.tokenizeCard();
+        } catch (e) {
+            settleTokenizer();
+            setBusy(false);
+            if (challengeWin.current && !challengeWin.current.closed) challengeWin.current.close();
+            challengeWin.current = null;
+            setError(`Tokenizer error: ${e.message}`);
         }
     };
 
-    const handleOpenPlaid = async () => {
+    /* ---------- Card: 3DS result ---------- */
+    const confirmCard = useCallback(async () => {
+        if (!pendingCardId) return;
         try {
-            setLoading(true);
-            const { token } = await request('post', '/payment-methods/ach/link-token');
-            setLoading(false);
+            const res = await request('get', `/payment-methods/${pendingCardId}/sync`);
+            if (res.status === 'Verified') toast.success('Card verified', 'The card can now fund transfers.');
+            else toast.warning(`Card status: ${res.status}`, 'Inyo has not confirmed the verification yet. Refresh later.');
+        } catch (e) {
+            toast.error('Could not confirm card status', errorMessage(e));
+        } finally {
+            setChallengeUrl(null);
+            setChallengeTab(false);
+            if (challengeWin.current && !challengeWin.current.closed) challengeWin.current.close();
+            challengeWin.current = null;
+            setPendingCardId(null);
+            setPendingPaymentId(null);
+            await fetchMethods();
+            setView('list');
+        }
+    }, [pendingCardId, fetchMethods, toast]);
 
+    // Docs (handling-3d-secure): in PostMessage mode the ACS page posts {paymentId, externalPaymentId,
+    // amount, approved} to the parent window, only to pages whose URL Inyo registered beforehand. In
+    // redirect mode the issuer sends the browser to successUrl/failUrl; those land on the BFF
+    // (/api/3ds/*), which answers a page that relays the payload here from the app's own origin.
+    // Whatever the payload says, the funding account status read from Inyo is what decides.
+    useEffect(() => {
+        if (!challengeOpen) return undefined;
+        const onMessage = (event) => {
+            // Every message is logged while the modal is open, whatever its origin: the challenge page
+            // posts to window.top with the targetOrigin the gateway holds for this payment, and a
+            // mismatch is dropped silently by the browser, so seeing nothing here is itself a finding.
+            console.debug('window message while 3DS modal open', event.origin, event.data);
+            let data = event.data;
+            if (typeof data === 'string') { try { data = JSON.parse(data); } catch { return; } }
+            const relayed = data?.source === 'remittance-sample-3ds' && event.origin === window.location.origin;
+            if (!relayed && !/inyo\.global|simpleps\.com|inyoplatform\.com/.test(event.origin || '')) return;
+            const payload = relayed ? { outcome: data.outcome, ...data.payload } : (data?.response || data);
+            if (!payload || typeof payload !== 'object') return;
+            if (!relayed && !('approved' in payload) && !payload.paymentId && !payload.id && !payload.status) return;
+            console.debug('3DS result received', payload);
+            setNotice(`3DS result received ${relayed ? `via ${data.outcome}Url` : `from ${event.origin}`}: ${JSON.stringify(payload)}. Confirming the status with Inyo…`);
+            confirmCard();
+        };
+        window.addEventListener('message', onMessage);
+        return () => window.removeEventListener('message', onMessage);
+    }, [challengeOpen, confirmCard]);
+
+    // While the challenge is open, poll Inyo (GET /fundingAccounts/{id} through the BFF sync) every
+    // 5 s: the gateway reports the result to Inyo, so the status leaves ActionRequired there whatever
+    // happens in the browser (postMessage, redirect or nothing). Stops after 10 minutes.
+    useEffect(() => {
+        if (!challengeOpen || !pendingCardId) return undefined;
+        let stopped = false;
+        const startedAt = Date.now();
+        const tick = async () => {
+            if (stopped) return;
+            if (Date.now() - startedAt > 10 * 60 * 1000) { stopped = true; return; }
+            try {
+                const res = await request('get', `/payment-methods/${pendingCardId}/sync`);
+                if (stopped) return;
+                const status = String(res?.status || '').replace(/\s+/g, '').toLowerCase();
+                if (status && status !== 'actionrequired' && status !== 'pending') {
+                    setNotice(`Inyo now reports ${res.status} for this card.`);
+                    confirmCard();
+                }
+            } catch {
+                /* transient; try again on the next tick */
+            }
+        };
+        const timer = setInterval(tick, 5000);
+        return () => { stopped = true; clearInterval(timer); };
+    }, [challengeOpen, pendingCardId, confirmCard]);
+
+    // Redirect mode, top-level navigation: the challenge ran outside the iframe and the BFF sent the browser
+    // back here (/payment?3ds=success|fail). The pending card id is gone with the page, so re-read the list.
+    useEffect(() => {
+        const outcome = searchParams.get('3ds');
+        if (!outcome) return;
+        setSearchParams((prev) => { prev.delete('3ds'); return prev; }, { replace: true });
+        if (outcome === 'success') toast.success('3DS completed', 'Refreshing the funding accounts from Inyo…');
+        else toast.warning('3DS failed', 'The card issuer did not authenticate the card.');
+        fetchMethods();
+    }, [searchParams, setSearchParams, toast, fetchMethods]);
+
+    /* ---------- ACH: Plaid ---------- */
+    const openPlaid = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            await loadScript(PLAID_SRC);
+            const { token } = await request('post', '/payment-methods/ach/link-token');
             const handler = window.Plaid.create({
                 token,
                 onSuccess: async (public_token, metadata) => {
-                    const account_id = metadata.accounts[0]?.id;
-                    const nickname = metadata.institution?.name || 'Bank Account';
                     try {
-                        setLoading(true);
-                        await request('post', '/payment-methods/ach', {
-                            bankData: { accountCheckToken: public_token, accountCheckId: account_id, nickname }
+                        setBusy(true);
+                        const res = await request('post', '/payment-methods/ach', {
+                            bankData: { accountCheckToken: public_token, accountCheckId: metadata.accounts?.[0]?.id, nickname: metadata.institution?.name || 'Bank account' },
                         });
+                        toast.success('Bank account linked', `Status: ${res.status}. ACH accounts become usable once Verified.`);
                         await fetchMethods();
                         setView('list');
                     } catch (err) {
-                        alert('Error saving bank account: ' + err.message);
+                        setError(errorMessage(err, 'Could not register the bank account'));
                     } finally {
-                        setLoading(false);
+                        setBusy(false);
                     }
                 },
                 onExit: (err) => {
-                    if (err) alert('Plaid error: ' + (err.display_message || err.error_message));
-                }
+                    setBusy(false);
+                    if (err) setError(err.display_message || err.error_message || 'Plaid Link was closed with an error.');
+                },
             });
+            setBusy(false);
             handler.open();
         } catch (err) {
-            setLoading(false);
-            alert('Error initiating bank connection: ' + err.message);
+            setBusy(false);
+            setError(errorMessage(err, 'Could not start Plaid Link'));
         }
     };
 
-    const getBillingAddress = () => ({
-        address1: document.getElementById('bill-addr1')?.value,
-        address2: document.getElementById('bill-addr2')?.value,
-        city: document.getElementById('bill-city')?.value,
-        state: document.getElementById('bill-state')?.value,
-        zipcode: document.getElementById('bill-zip')?.value,
-    });
-
-    const handleError = (resp) => {
-        console.error("Tokenizer Error:", resp);
-        // Highlight fields
-        // Clear previous
-        document.querySelectorAll('.form-control').forEach(el => el.classList.remove('border-red-500'));
-
-        if (resp.code === 'INVALID_PAN') document.querySelector('#cc-number')?.classList.add('border-red-500');
-        if (resp.code === 'INVALID_EXPIRY_DATE') document.querySelector('#cc-expiration')?.classList.add('border-red-500');
-        if (resp.code === 'INVALID_CVV') document.querySelector('#cc-cvv')?.classList.add('border-red-500');
-
-        alert('Payment Error: ' + (resp.message || resp.code));
+    const applyProfileAddress = (checked) => {
+        setUseProfileAddress(checked);
+        setBilling(checked ? { address1: user.address || '', address2: '', city: user.city || '', state: user.state || '', zipcode: user.zipcode || '' } : EMPTY_BILLING);
     };
+    const onBilling = (e) => setBilling({ ...billing, [e.target.name]: e.target.value });
 
-    const handleTokenizeClick = () => {
-        if (tokenizer) {
-            // Check billing fields manually first since they are outside tokenizer status
-            const inputs = document.querySelectorAll('.billing-section input[required], .billing-section select[required]');
-            let valid = true;
-            inputs.forEach(input => {
-                if (!input.value) {
-                    input.classList.add('border-red-500');
-                    valid = false;
-                } else {
-                    input.classList.remove('border-red-500');
-                }
-            });
-
-            if (!valid) {
-                alert("Please complete billing address.");
-                return;
-            }
-
-            try {
-                tokenizer.tokenizeCard();
-            } catch (e) {
-                console.error(e);
-                alert("Tokenizer error: " + e.message);
-            }
-        } else {
-            alert("Secure tokenizer not initialized.");
-        }
+    const titles = {
+        list: ['Payment options', inFlow ? 'Choose how to pay for this transfer.' : 'Choose a funding account to manage.'],
+        'select-type': ['Add payment method', 'Both are registered as Inyo funding accounts in USD.'],
+        'add-card': ['Add a debit card', 'Card data is tokenized in your browser by inyo.js and never touches this server.'],
+        'add-ach': ['Link a bank account', 'Verified through Plaid Link. Routing and account numbers are never sent to Inyo directly.'],
     };
-
-    const toggleBilling = (e) => {
-        if (e.target.checked) {
-            document.getElementById('bill-addr1').value = user.address || '';
-            document.getElementById('bill-city').value = user.city || '';
-            document.getElementById('bill-state').value = user.state || '';
-            document.getElementById('bill-zip').value = user.zipcode || '';
-        } else {
-            document.getElementById('bill-addr1').value = '';
-            document.getElementById('bill-city').value = '';
-            document.getElementById('bill-state').value = '';
-            document.getElementById('bill-zip').value = '';
-        }
-    };
-
-    // Shared Billing Fragment
-    const BillingSection = () => (
-        <div className="billing-section">
-            <h4 className="mb-4 font-bold text-gray-700">Billing Address</h4>
-            <div className="mb-4">
-                <label className="flex items-center gap-2 text-sm text-gray-600 mb-4 cursor-pointer">
-                    <input
-                        type="checkbox"
-                        className="rounded text-primary focus:ring-primary"
-                        onChange={toggleBilling}
-                    />
-                    Use my address on file
-                </label>
-
-                <div className="mb-3">
-                    <label htmlFor="bill-addr1" className="block text-sm font-medium text-gray-700 mb-1">Address Line 1</label>
-                    <input type="text" id="bill-addr1" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary" placeholder="123 Main St" required />
-                </div>
-                <div className="mb-3">
-                    <label htmlFor="bill-addr2" className="block text-sm font-medium text-gray-700 mb-1">Address Line 2 (Optional)</label>
-                    <input type="text" id="bill-addr2" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary" placeholder="Apt, Suite, etc." />
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
-                    <div className="md:col-span-1">
-                        <label htmlFor="bill-city" className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                        <input type="text" id="bill-city" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary" placeholder="New York" required />
-                    </div>
-                    <div className="md:col-span-1">
-                        <label htmlFor="bill-state" className="block text-sm font-medium text-gray-700 mb-1">State</label>
-                        <select id="bill-state" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary" required>
-                            <option value="">Select State</option>
-                            <option value="AL">Alabama</option>
-                            <option value="AK">Alaska</option>
-                            <option value="AZ">Arizona</option>
-                            <option value="AR">Arkansas</option>
-                            <option value="CA">California</option>
-                            <option value="CO">Colorado</option>
-                            <option value="CT">Connecticut</option>
-                            <option value="DE">Delaware</option>
-                            <option value="DC">District Of Columbia</option>
-                            <option value="FL">Florida</option>
-                            <option value="GA">Georgia</option>
-                            <option value="HI">Hawaii</option>
-                            <option value="ID">Idaho</option>
-                            <option value="IL">Illinois</option>
-                            <option value="IN">Indiana</option>
-                            <option value="IA">Iowa</option>
-                            <option value="KS">Kansas</option>
-                            <option value="KY">Kentucky</option>
-                            <option value="LA">Louisiana</option>
-                            <option value="ME">Maine</option>
-                            <option value="MD">Maryland</option>
-                            <option value="MA">Massachusetts</option>
-                            <option value="MI">Michigan</option>
-                            <option value="MN">Minnesota</option>
-                            <option value="MS">Mississippi</option>
-                            <option value="MO">Missouri</option>
-                            <option value="MT">Montana</option>
-                            <option value="NE">Nebraska</option>
-                            <option value="NV">Nevada</option>
-                            <option value="NH">New Hampshire</option>
-                            <option value="NJ">New Jersey</option>
-                            <option value="NM">New Mexico</option>
-                            <option value="NY">New York</option>
-                            <option value="NC">North Carolina</option>
-                            <option value="ND">North Dakota</option>
-                            <option value="OH">Ohio</option>
-                            <option value="OK">Oklahoma</option>
-                            <option value="OR">Oregon</option>
-                            <option value="PA">Pennsylvania</option>
-                            <option value="RI">Rhode Island</option>
-                            <option value="SC">South Carolina</option>
-                            <option value="SD">South Dakota</option>
-                            <option value="TN">Tennessee</option>
-                            <option value="TX">Texas</option>
-                            <option value="UT">Utah</option>
-                            <option value="VT">Vermont</option>
-                            <option value="VA">Virginia</option>
-                            <option value="WA">Washington</option>
-                            <option value="WV">West Virginia</option>
-                            <option value="WI">Wisconsin</option>
-                            <option value="WY">Wyoming</option>
-                        </select>
-                    </div>
-                    <div className="md:col-span-1">
-                        <label htmlFor="bill-zip" className="block text-sm font-medium text-gray-700 mb-1">Zip Code</label>
-                        <input type="text" id="bill-zip" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary" placeholder="10001" required />
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
 
     return (
-        <div className="add-payment-page fade-in">
-            {!challengeUrl && (
-                <div className="header-section mb-6 flex justify-between items-center">
-                    <div>
-                        <h1 className="text-secondary text-3xl font-light mb-2">
-                            {view === 'list' && 'Payment Options'}
-                            {view === 'select-type' && 'Add Payment Method'}
-                            {view === 'add-card' && 'Add New Card'}
-                            {view === 'add-ach' && 'Add Bank Account'}
-                        </h1>
-                        <p className="text-gray-400">
-                            {view === 'list' && 'Select how you want to pay.'}
-                            {view === 'select-type' && 'Choose a payment method type.'}
-                            {view === 'add-card' && 'Enter your card details safely.'}
-                            {view === 'add-ach' && 'Link your bank account via ACH.'}
-                        </p>
+        <div>
+            <PageHeader
+                kicker={inFlow ? 'Step 4 of 5' : 'Account'}
+                title={titles[view][0]}
+                description={titles[view][1]}
+                actions={view === 'list' ? <Button icon={Plus} variant={methods.length ? 'secondary' : 'primary'} onClick={() => setView('select-type')}>Add new</Button> : null}
+            />
+
+            {error && view !== 'add-card' && <Alert tone="danger" className="mb-6">{error}</Alert>}
+
+            {loading ? (
+                <Spinner label="Loading payment methods…" />
+            ) : view === 'list' ? (
+                methods.length === 0 ? (
+                    <EmptyState icon={CreditCard} title="No payment method yet" description="Add a debit card or link a bank account to fund your transfer." action={<Button icon={Plus} onClick={() => setView('select-type')}>Add payment method</Button>} />
+                ) : (
+                    <div className="space-y-8">
+                        {[{ type: 'ACH', title: 'Bank accounts (ACH)' }, { type: 'CARD', title: 'Debit cards' }].map(({ type, title }) => {
+                            const items = methods.filter((m) => m.type === type);
+                            if (!items.length) return null;
+                            return (
+                                <section key={type}>
+                                    <p className="kicker mb-3">{title}</p>
+                                    <ul className="grid gap-3 sm:grid-cols-2">
+                                        {items.map((m) => <li key={m.id}><PaymentMethodCard method={m} onSelect={handleSelect} /></li>)}
+                                    </ul>
+                                </section>
+                            );
+                        })}
+                        <p className="text-xs text-ink-400">Only methods with status Verified can be selected. Pending ACH accounts become usable after Plaid verification.</p>
+                        {inFlow && (
+                            <div>
+                                <Button variant="ghost" icon={ArrowLeft} onClick={() => navigate(transactionData.beneficiary ? `/beneficiaries/${transactionData.beneficiary.id}/account` : '/beneficiaries')}>Back</Button>
+                            </div>
+                        )}
                     </div>
-                    {view === 'list' && (
-                        <button
-                            onClick={() => setView('select-type')}
-                            className="btn rounded-full px-6 py-2 text-sm font-bold flex items-center gap-2 transition-all hover:shadow-md"
-                            style={{ backgroundColor: '#f3f4f6', color: 'var(--color-primary)' }}
-                        >
-                            <span className="text-xl">+</span> Add New
-                        </button>
-                    )}
-                </div>
-            )}
-
-            {challengeUrl ? (
-                <div className="w-full h-[800px] bg-white rounded shadow-sm border border-gray-100 relative mt-6">
-                    <button
-                        onClick={() => {
-                            setChallengeUrl(null);
-                            setPendingCardId(null);
-                            fetchMethods();
-                        }}
-                        className="absolute top-2 right-2 text-gray-500 hover:text-black text-2xl font-bold z-10 w-8 h-8 flex items-center justify-center bg-white rounded-full shadow-sm border border-gray-200"
-                        title="Close and Refresh"
-                    >
-                        &times;
-                    </button>
-                    <iframe
-                        src={challengeUrl}
-                        className="w-full h-full rounded"
-                        title="Verification"
-                        style={{ border: 'none' }}
-                    />
-                </div>
-            ) : (
-                loading ? <div className="loader"></div> : (
-                    <>
-                        {/* VIEW: LIST */}
-                        {view === 'list' && (
-                            <div className="methods-list">
-                                {methods.length === 0 && (
-                                    <div className="text-center p-8 text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
-                                        No payment methods found. Add one to continue.
-                                    </div>
-                                )}
-
-                                {['ACH', 'CARD'].map(type => {
-                                    const group = methods.filter(pm => pm.type === type);
-                                    if (group.length === 0) return null;
-                                    return (
-                                        <div key={type} style={{ marginBottom: '1.5rem' }}>
-                                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
-                                                {type === 'ACH' ? 'Bank Accounts' : 'Cards'}
-                                            </p>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                                {group.map(pm => (
-                                                    <div
-                                                        key={pm.id}
-                                                        onClick={(e) => { e.preventDefault(); handleSelect(pm); }}
-                                                        role="button"
-                                                        tabIndex={0}
-                                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(pm); }}
-                                                        className="bg-white p-4 rounded border border-gray-100 shadow-sm hover:shadow-md cursor-pointer transition-all flex justify-between items-center"
-                                                    >
-                                                        <div className="flex items-center gap-4">
-                                                            <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-2xl">
-                                                                {pm.type === 'ACH' ? '🏦' : '💳'}
-                                                            </div>
-                                                            <div>
-                                                                <h3 className="font-bold text-gray-700">
-                                                                    {pm.type === 'ACH' ? (pm.data?.apiResponse?.bankName || pm.token?.nickname || 'Bank Account') : (pm.token?.schemeId || 'Card')}
-                                                                </h3>
-                                                                <p className="text-sm text-gray-400">
-                                                                    {pm.type === 'ACH'
-                                                                        ? `ACH ···· ${(pm.data?.apiResponse?.accountNumber || '').slice(-4) || '****'}`
-                                                                        : `Ending in ${pm.token?.lastFourDigits || '****'}`
-                                                                    }
-                                                                </p>
-                                                            </div>
-                                                        </div>
-                                                        <span className="text-primary font-bold">Select ›</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-
-                                <div className="flex justify-start" style={{ marginTop: '3rem' }}>
-                                    <button type="button" onClick={() => {
-                                        const beneficiaryId = transactionData?.beneficiary?.id;
-                                        if (beneficiaryId) navigate(`/beneficiaries/${beneficiaryId}/account`);
-                                        else navigate('/beneficiaries');
-                                    }} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
-                                        Back
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* VIEW: SELECT TYPE */}
-                        {view === 'select-type' && (
-                            <div className="select-type-view grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div
-                                    onClick={() => setView('add-card')}
-                                    className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 hover:shadow-lg cursor-pointer transition-all text-center group"
-                                    style={{ cursor: 'pointer' }}
-                                >
-                                    <div className="text-5xl mb-4 group-hover:scale-110 transition-transform">💳</div>
-                                    <h3 className="text-xl font-bold text-gray-800 mb-2">Debit Card</h3>
-                                    <p className="text-gray-500">Instant processing. Standard fees apply.</p>
-                                </div>
-
-                                <div
-                                    onClick={() => setView('add-ach')}
-                                    className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 hover:shadow-lg cursor-pointer transition-all text-center group"
-                                    style={{ cursor: 'pointer' }}
-                                >
-                                    <div className="text-5xl mb-4 group-hover:scale-110 transition-transform">🏦</div>
-                                    <h3 className="text-xl font-bold text-gray-800 mb-2">Bank Account (ACH)</h3>
-                                    <p className="text-gray-500">Lower fees. Takes 1-3 business days.</p>
-                                </div>
-
-                                <div className="col-span-full mt-4">
-                                    <button type="button" onClick={() => {
-                                        if (methods.length > 0) setView('list');
-                                        else navigate(-1);
-                                    }} className="btn btn-back text-gray-500 hover:text-gray-800">
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* VIEW: ADD CARD */}
-                        {view === 'add-card' && (
-                            <div className="add-form bg-white p-6 rounded shadow-sm border border-gray-100 relative">
-                                <BillingSection />
-                                <hr className="my-6 border-gray-100" />
-
-                                <div id="payment-form-container">
-                                    <h4 className="mb-4 font-bold text-gray-700">Card Details</h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                        <div>
-                                            <label htmlFor="cc-name" className="block text-sm font-medium text-gray-700 mb-1">Name on card</label>
-                                            <input type="text" className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                data-field="cardholder" id="cc-name" placeholder="John Doe" required />
-                                        </div>
-                                        <div>
-                                            <label htmlFor="cc-number" className="block text-sm font-medium text-gray-700 mb-1">Debit card number</label>
-                                            <input type="text" pattern="[0-9]{4}[0-9]{4}[0-9]{4}[0-9]{4}"
-                                                className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                data-field="pan" id="cc-number" placeholder="0000 0000 0000 0000" maxLength="19" required />
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4 mb-6">
-                                        <div>
-                                            <label htmlFor="cc-expiration" className="block text-sm font-medium text-gray-700 mb-1">Expiration</label>
-                                            <input type="text" pattern="[0-9]{2}/[0-9]{2}"
-                                                className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                data-field="expirationDate" id="cc-expiration" placeholder="MM/YY" maxLength="5" required />
-                                        </div>
-                                        <div>
-                                            <label htmlFor="cc-cvv" className="block text-sm font-medium text-gray-700 mb-1">CVV</label>
-                                            <input type="text" pattern="[0-9]{3,4}"
-                                                className="form-control w-full p-2 border rounded focus:ring-primary focus:border-primary"
-                                                data-field="securitycode" id="cc-cvv" placeholder="123" maxLength="4" required />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="flex justify-between" style={{ marginTop: '3rem' }}>
-                                    <button type="button" onClick={() => setView('select-type')} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
-                                        Back
-                                    </button>
-                                    <button type="button" onClick={handleTokenizeClick} className="btn btn-next px-8 py-3 text-lg rounded-full" style={{ background: 'var(--color-success)', color: 'white' }}>
-                                        Add Card
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* VIEW: ADD ACH */}
-                        {view === 'add-ach' && (
-                            <div className="add-form bg-white p-6 rounded shadow-sm border border-gray-100 relative">
-                                <h4 className="mb-2 font-bold text-gray-700">Connect Bank Account</h4>
-                                <p className="text-sm text-gray-500 mb-6">Securely link your bank account using Plaid. Your credentials are never shared with us.</p>
-
-                                <button
-                                    type="button"
-                                    onClick={handleOpenPlaid}
-                                    disabled={loading}
-                                    className="w-full flex items-center justify-center gap-3 p-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 font-semibold hover:border-primary hover:text-primary transition-colors"
-                                >
-                                    🏦 {loading ? 'Connecting…' : 'Connect with Plaid'}
-                                </button>
-
-                                <div className="flex justify-between" style={{ marginTop: '3rem' }}>
-                                    <button type="button" onClick={() => setView('select-type')} className="btn btn-back px-8 py-3 text-lg rounded-full" style={{ background: '#C084FC' }}>
-                                        Back
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </>
                 )
+            ) : view === 'select-type' ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                    {[
+                        { key: 'add-card', icon: CreditCard, title: 'Debit card', text: 'Instant. May require a 3D Secure challenge.', tone: 'bg-brand-50 text-brand-600' },
+                        { key: 'add-ach', icon: Landmark, title: 'Bank account (ACH)', text: 'Lower fees. Linked with Plaid, settles in 1 to 3 business days.', tone: 'bg-info-50 text-info-600' },
+                    ].map(({ key, icon: Icon, title, text, tone }) => (
+                        <button key={key} type="button" onClick={() => { setError(null); setView(key); }} className="card group flex flex-col items-start p-6 text-left transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-500/20">
+                            <div className={cx('mb-4 flex size-12 items-center justify-center rounded-2xl', tone)}><Icon className="size-6" /></div>
+                            <p className="text-lg font-semibold text-ink-900">{title}</p>
+                            <p className="mt-1 text-sm text-ink-500">{text}</p>
+                        </button>
+                    ))}
+                    <div className="sm:col-span-2">
+                        <Button variant="ghost" icon={ArrowLeft} onClick={() => (methods.length ? setView('list') : navigate(-1))}>Cancel</Button>
+                    </div>
+                </div>
+            ) : view === 'add-card' ? (
+                <Card>
+                    <CardBody className="space-y-8">
+                        <section>
+                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                                <h3 className="font-semibold text-ink-900">Billing address</h3>
+                                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-500">
+                                    <input type="checkbox" checked={useProfileAddress} onChange={(e) => applyProfileAddress(e.target.checked)} className="size-4 accent-brand-600" />
+                                    Use my address on file
+                                </label>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <Field name="address1" label="Address line 1" value={billing.address1} onChange={onBilling} required placeholder="123 Market St" />
+                                <Field name="address2" label="Address line 2" value={billing.address2} onChange={onBilling} placeholder="Apt, suite (optional)" />
+                                <Field name="city" label="City" value={billing.city} onChange={onBilling} required />
+                                <div className="grid grid-cols-[1fr_0.8fr] gap-4">
+                                    <Field name="state" label="State" value={billing.state} onChange={onBilling} options={US_STATES} required placeholder="Select" />
+                                    <Field name="zipcode" label="ZIP code" value={billing.zipcode} onChange={onBilling} required placeholder="94105" />
+                                </div>
+                            </div>
+                        </section>
+
+                        <section id="payment-form-container">
+                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                    <h3 className="font-semibold text-ink-900">Card details</h3>
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-success-50 px-2 py-0.5 text-[11px] font-semibold text-success-700"><Lock className="size-3" /> Tokenized by inyo.js</span>
+                                </div>
+                                <label className="flex items-center gap-2 text-xs font-medium text-ink-500" title="redirect: threeDSData.successUrl/failUrl point at this app and the challenge opens in a new tab. postmessage: threeDSData.enablePostMessage, result arrives as a window message (page URL registered with Inyo). off: enable:false, the challenge comes from POST /fundingAccounts (ActionRequired + redirectAcsUrl).">
+                                    3DS in tokenizer
+                                    <select value={threeDsMode} disabled={busy} onChange={(e) => setThreeDsMode(e.target.value)} className="field-control h-8 w-auto py-0 text-xs">
+                                        <option value="off">off (core drives 3DS)</option>
+                                        <option value="redirect">redirect (successUrl/failUrl)</option>
+                                        <option value="postmessage">postMessage</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <Field name="cc-name" label="Name on card" error={cardErrors.cardholder}>
+                                    <input id="cc-name" data-field="cardholder" className="field-control" placeholder="Jane Doe" autoComplete="cc-name" aria-invalid={!!cardErrors.cardholder} />
+                                </Field>
+                                <Field name="cc-number" label="Debit card number" error={cardErrors.pan}>
+                                    <input id="cc-number" data-field="pan" className="field-control font-mono" placeholder="0000 0000 0000 0000" maxLength={19} inputMode="numeric" autoComplete="cc-number" aria-invalid={!!cardErrors.pan} />
+                                </Field>
+                                <Field name="cc-expiration" label="Expiration" error={cardErrors.expirationDate}>
+                                    <input id="cc-expiration" data-field="expirationDate" className="field-control font-mono" placeholder="MM/YY" maxLength={5} inputMode="numeric" autoComplete="cc-exp" aria-invalid={!!cardErrors.expirationDate} />
+                                </Field>
+                                <Field name="cc-cvv" label="CVV" error={cardErrors.securitycode}>
+                                    <input id="cc-cvv" data-field="securitycode" className="field-control font-mono" placeholder="123" maxLength={4} inputMode="numeric" autoComplete="cc-csc" aria-invalid={!!cardErrors.securitycode} />
+                                </Field>
+                            </div>
+                            {threeDsMode === 'redirect' && (
+                                <p className="mt-3 text-xs text-ink-400">
+                                    threeDSData.successUrl = {window.location.origin}/api/3ds/success, failUrl = {window.location.origin}/api/3ds/fail.
+                                </p>
+                            )}
+                            <p className="mt-3 text-xs text-ink-400">
+                                Sandbox: 5163613613613613 (Mastercard debit) has no 3DS, 4462030000000000 triggers a 3DS challenge, 4035874000424977 is frictionless, 4000000000000002 is declined. Any future expiry; CVV 555 simulates a match.{' '}
+                                <a href="https://dev.inyoglobal.com/api-references/payments-gateway/apis/test-data/cards/" target="_blank" rel="noreferrer" className="font-medium text-brand-600 underline-offset-2 hover:underline">
+                                    Full list of test cards, CVV and AVS codes
+                                </a>
+                                .
+                            </p>
+                        </section>
+
+                        {notice && <Alert tone="warning" title="Tokenizer notice">{notice}</Alert>}
+                        {error && (
+                            <div ref={errorRef}>
+                                <Alert tone="danger" title="Card not added">{error}</Alert>
+                            </div>
+                        )}
+                        {busy && !error && <p className="text-sm text-ink-500" role="status">Tokenizing the card with inyo.js and registering it with Inyo…</p>}
+                    </CardBody>
+                    <CardFooter>
+                        <Button variant="ghost" icon={ArrowLeft} disabled={busy} onClick={() => setView('select-type')}>Back</Button>
+                        <Button icon={ShieldCheck} loading={busy} onClick={handleTokenize}>{busy ? 'Adding card…' : 'Add card'}</Button>
+                    </CardFooter>
+                </Card>
+            ) : (
+                <Card>
+                    <CardBody>
+                        <div className="flex flex-col items-center rounded-xl border border-dashed border-ink-300 bg-ink-50/60 px-6 py-10 text-center">
+                            <div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-info-50 text-info-600"><Landmark className="size-6" /></div>
+                            <p className="font-semibold text-ink-900">Connect with Plaid</p>
+                            <p className="mt-1 max-w-sm text-sm text-ink-500">Your bank credentials go to Plaid only. Inyo receives a verification token and the selected account id.</p>
+                            <Button className="mt-5" loading={busy} onClick={openPlaid}>Open Plaid Link</Button>
+                            <p className="mt-3 text-xs text-ink-400">Sandbox tip: institution “First Platypus Bank”, user_good / pass_good.</p>
+                        </div>
+                    </CardBody>
+                    <CardFooter>
+                        <Button variant="ghost" icon={ArrowLeft} onClick={() => setView('select-type')}>Back</Button>
+                        <span />
+                    </CardFooter>
+                </Card>
             )}
+
+            <Modal
+                open={challengeTab}
+                size="md"
+                title="3D Secure verification in a new tab"
+                description="Complete the challenge from your card issuer in the tab that just opened. In redirect mode the issuer sends that tab to the app's successUrl or failUrl, which reports back here and closes it."
+                onClose={() => { setChallengeTab(false); if (challengeWin.current && !challengeWin.current.closed) challengeWin.current.close(); challengeWin.current = null; setPendingCardId(null); setPendingPaymentId(null); fetchMethods(); }}
+            >
+                <div className="space-y-4 px-6 py-5">
+                    <p className="text-sm text-ink-600">
+                        Waiting for the challenge{pendingPaymentId ? <> (gateway payment <code>{pendingPaymentId}</code>)</> : null}. This page also re-reads the card from Inyo every 5 seconds, so it closes as soon as Inyo reports the result, whatever happens in the other tab.
+                    </p>
+                    {notice && <Alert tone="warning" title="Notice">{notice}</Alert>}
+                    <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="secondary" icon={RefreshCw} onClick={confirmCard}>I completed the challenge, check status</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { const w = challengeWin.current; if (w && !w.closed) w.focus(); }}>Go to the challenge tab</Button>
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal
+                open={!!challengeUrl}
+                size="lg"
+                title="3D Secure verification"
+                description="Complete the challenge from your card issuer. The result is confirmed with Inyo before the card is enabled."
+                onClose={() => { setChallengeUrl(null); setPendingCardId(null); setPendingPaymentId(null); fetchMethods(); }}
+            >
+                <iframe src={challengeUrl || 'about:blank'} title="3D Secure challenge" className="h-[55vh] w-full bg-white" />
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 px-6 py-4">
+                    <p className="max-w-xl text-xs text-ink-500">
+                        After the code, the issuer reports the result to Inyo; the frame itself may stay on <em>Redirecting…</em> or <em>Loading…</em>. This dialog re-reads the card from Inyo every 5 seconds and closes as soon as the status leaves <em>ActionRequired</em>{pendingPaymentId ? <> (gateway payment <code>{pendingPaymentId}</code>)</> : null}. You can also check it manually.
+                    </p>
+                    <Button size="sm" variant="secondary" icon={RefreshCw} onClick={confirmCard}>I completed the challenge, check status</Button>
+                </div>
+            </Modal>
         </div>
     );
 };

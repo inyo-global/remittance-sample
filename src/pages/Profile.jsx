@@ -1,198 +1,171 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Input from '../components/Input';
+import { ArrowRight, Save, ShieldCheck } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import { Card, CardBody, CardFooter, CardHeader } from '../components/ui/Card';
+import Field from '../components/ui/Field';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
+import Spinner from '../components/ui/Spinner';
+import { useToast } from '../lib/toast';
 import { request } from '../api';
+import { errorMessage } from '../lib/format';
+import { US_STATES } from '../lib/usStates';
 
 const COUNTRIES = [
-    { value: 'US', label: 'United States' },
-    { value: 'CA', label: 'Canada' },
-    { value: 'MX', label: 'Mexico' },
-    { value: 'BR', label: 'Brazil' },
-    { value: 'CL', label: 'Chile' },
-    { value: 'PE', label: 'Peru' }
+    { value: 'US', label: 'United States' }, { value: 'CA', label: 'Canada' }, { value: 'MX', label: 'Mexico' },
+    { value: 'BR', label: 'Brazil' }, { value: 'CL', label: 'Chile' }, { value: 'PE', label: 'Peru' }, { value: 'CO', label: 'Colombia' },
 ];
 
-const US_STATES = [
-    { value: 'AL', label: 'Alabama' }, { value: 'AK', label: 'Alaska' }, { value: 'AZ', label: 'Arizona' }, { value: 'AR', label: 'Arkansas' }, { value: 'CA', label: 'California' },
-    { value: 'CO', label: 'Colorado' }, { value: 'CT', label: 'Connecticut' }, { value: 'DE', label: 'Delaware' }, { value: 'FL', label: 'Florida' }, { value: 'GA', label: 'Georgia' },
-    { value: 'HI', label: 'Hawaii' }, { value: 'ID', label: 'Idaho' }, { value: 'IL', label: 'Illinois' }, { value: 'IN', label: 'Indiana' }, { value: 'IA', label: 'Iowa' },
-    { value: 'KS', label: 'Kansas' }, { value: 'KY', label: 'Kentucky' }, { value: 'LA', label: 'Louisiana' }, { value: 'ME', label: 'Maine' }, { value: 'MD', label: 'Maryland' },
-    { value: 'MA', label: 'Massachusetts' }, { value: 'MI', label: 'Michigan' }, { value: 'MN', label: 'Minnesota' }, { value: 'MS', label: 'Mississippi' }, { value: 'MO', label: 'Missouri' },
-    { value: 'MT', label: 'Montana' }, { value: 'NE', label: 'Nebraska' }, { value: 'NV', label: 'Nevada' }, { value: 'NH', label: 'New Hampshire' }, { value: 'NJ', label: 'New Jersey' },
-    { value: 'NM', label: 'New Mexico' }, { value: 'NY', label: 'New York' }, { value: 'NC', label: 'North Carolina' }, { value: 'ND', label: 'North Dakota' }, { value: 'OH', label: 'Ohio' },
-    { value: 'OK', label: 'Oklahoma' }, { value: 'OR', label: 'Oregon' }, { value: 'PA', label: 'Pennsylvania' }, { value: 'RI', label: 'Rhode Island' }, { value: 'SC', label: 'South Carolina' },
-    { value: 'SD', label: 'South Dakota' }, { value: 'TN', label: 'Tennessee' }, { value: 'TX', label: 'Texas' }, { value: 'UT', label: 'Utah' }, { value: 'VT', label: 'Vermont' },
-    { value: 'VA', label: 'Virginia' }, { value: 'WA', label: 'Washington' }, { value: 'WV', label: 'West Virginia' }, { value: 'WI', label: 'Wisconsin' }, { value: 'WY', label: 'Wyoming' }
+const DOC_TYPES = [
+    { value: 'passport', label: 'Passport' },
+    { value: 'driver_license', label: "Driver's license" },
 ];
 
-const Profile = ({ user }) => {
+const EMPTY = {
+    firstName: '', lastName: '', email: '', address: '', city: '', state: '', zipcode: '', phoneNumber: '',
+    gender: 'male', occupation: '', docType: 'passport', docNumber: '', issuingCountry: 'US', expirationDate: '', ssn: '',
+};
+
+/**
+ * Sender onboarding. Submitting creates (or patches) the Person in Inyo through
+ * the BFF, which stores the returned id as the sender's externalId.
+ */
+const Profile = ({ user, hasProfile, onSaved }) => {
     const navigate = useNavigate();
-    const [formData, setFormData] = useState({
-        firstName: '', lastName: '', email: '', address: '', city: '', zipcode: '', phoneNumber: '',
-        gender: 'male',
-        occupation: '',
-        docType: 'passport',
-        docNumber: '',
-        issuingCountry: '',
-        expirationDate: '',
-        state: ''
-    });
+    const toast = useToast();
+    const [formData, setFormData] = useState(EMPTY);
     const [loading, setLoading] = useState(false);
     const [fetching, setFetching] = useState(true);
+    const [error, setError] = useState(null);
 
     useEffect(() => {
-        const fetchProfile = async () => {
-            if (!user?.userId) return;
-            try {
-                const res = await request('get', `/profile?userId=${user.userId}`);
-                if (res.user) {
-                    setFormData(prev => ({
-                        ...prev,
-                        firstName: res.user.firstName || '',
-                        lastName: res.user.lastName || '',
-                        email: res.user.email || '',
-                        address: res.user.address || '',
-                        city: res.user.city || '',
-                        zipcode: res.user.zipcode || '',
-                        phoneNumber: res.user.phoneNumber || (res.profile?.data ? JSON.parse(res.profile.data).phoneNumber : '') || '',
-                    }));
-                }
-                if (res.profile) {
-                    setFormData(prev => ({
-                        ...prev,
-                        gender: res.profile.gender || 'male',
-                        occupation: res.profile.occupation || '',
-                        docType: res.profile.docType || 'passport',
-                        docNumber: res.profile.docNumber || '',
-                        issuingCountry: res.profile.issuingCountry || '',
-                        expirationDate: res.profile.expirationDate || '',
-                        state: res.profile.data ? JSON.parse(res.profile.data).state : (res.user?.state || '')
-                    }));
-                }
-            } catch (error) {
-                console.error("Error fetching profile", error);
-            } finally {
-                setFetching(false);
-            }
-        };
-        fetchProfile();
-    }, [user]);
+        let cancelled = false;
+        request('get', '/profile')
+            .then((res) => {
+                if (cancelled) return;
+                const extra = res.profile?.data ? JSON.parse(res.profile.data) : {};
+                setFormData((prev) => ({
+                    ...prev,
+                    firstName: res.user?.firstName || '',
+                    lastName: res.user?.lastName || '',
+                    email: res.user?.email || '',
+                    address: res.user?.address || '',
+                    city: res.user?.city || '',
+                    zipcode: res.user?.zipcode || '',
+                    state: extra.state || res.user?.state || '',
+                    phoneNumber: res.user?.phoneNumber || extra.phoneNumber || '',
+                    gender: res.profile?.gender || 'male',
+                    occupation: res.profile?.occupation || '',
+                    docType: res.profile?.docType || 'passport',
+                    docNumber: res.profile?.docNumber || '',
+                    issuingCountry: extra.originalIssuingCountry || res.profile?.issuingCountry || 'US',
+                    expirationDate: res.profile?.expirationDate || '',
+                    ssn: '',
+                    ssnLast4: res.profile?.ssnLast4 || null,
+                }));
+            })
+            .catch((err) => !cancelled && setError(errorMessage(err, 'Could not load your profile')))
+            .finally(() => !cancelled && setFetching(false));
+        return () => { cancelled = true; };
+    }, [user?.userId]);
 
-    const handleChange = (e) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value });
-    };
+    const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
+        setError(null);
         try {
-            await request('post', '/complete-profile', {
-                userId: user.userId,
-                ...formData
-            });
-            navigate('/dashboard');
+            await request('post', '/complete-profile', formData);
+            const digits = formData.ssn.replace(/\D/g, '');
+            if (digits) setFormData((prev) => ({ ...prev, ssn: '', ssnLast4: digits.slice(-4) }));
+            onSaved?.({ firstName: formData.firstName, lastName: formData.lastName, address: formData.address, city: formData.city, state: formData.state, zipcode: formData.zipcode, phoneNumber: formData.phoneNumber });
+            toast.success(hasProfile ? 'Profile updated' : 'Profile created', 'Your sender profile was synced with Inyo.');
+            if (!hasProfile) navigate('/dashboard');
         } catch (err) {
-            alert('Failed to update profile: ' + (err.message || err));
+            setError(errorMessage(err?.details || err, 'Failed to save profile'));
         } finally {
             setLoading(false);
         }
     };
 
-    if (fetching) return <div className="loader"></div>;
+    if (fetching) return <Spinner label="Loading profile…" />;
+
+    const isLicense = formData.docType === 'driver_license';
 
     return (
-        <div className="container fade-in">
-            <div className="card">
-                <h2 className="mb-4">My Profile</h2>
-                <p className="mb-4 text-muted">Manage your personal information.</p>
+        <div className="mx-auto max-w-3xl">
+            <PageHeader
+                kicker="My profile"
+                title={hasProfile ? 'Personal information' : 'Complete your sender profile'}
+                description={hasProfile ? 'Changes are synced to your Inyo sender record.' : 'Inyo runs KYC on this data and assigns your compliance level and sending limits.'}
+            />
 
-                <form onSubmit={handleSubmit}>
-                    <div className="mb-6 border-b pb-4">
-                        <h3 className="text-lg font-bold text-gray-700 mb-3">Personal Information</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <Input name="firstName" label="First Name" value={formData.firstName} onChange={handleChange} required />
-                            <Input name="lastName" label="Last Name" value={formData.lastName} onChange={handleChange} required />
+            {!hasProfile && (
+                <Alert tone="info" className="mb-6" title="One step before sending money">
+                    Fill in your identity details so Inyo can verify you. Use a sandbox-reserved document number to simulate a given KYC outcome.
+                </Alert>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+                <Card>
+                    <CardHeader title="Personal details" description="Name and contact as they appear on your ID." />
+                    <CardBody className="grid gap-4 sm:grid-cols-2">
+                        <Field name="firstName" label="First name" value={formData.firstName} onChange={handleChange} required />
+                        <Field name="lastName" label="Last name" value={formData.lastName} onChange={handleChange} required />
+                        <Field name="email" label="Email" type="email" value={formData.email} onChange={handleChange} required disabled hint="Email is your login and cannot be changed here." />
+                        <Field name="phoneNumber" label="Mobile number" value={formData.phoneNumber} onChange={handleChange} placeholder="+1 555 123 4567" hint="E.164 format with country code." required />
+                        <Field name="address" label="Address line 1" value={formData.address} onChange={handleChange} required className="sm:col-span-2" />
+                        <Field name="city" label="City" value={formData.city} onChange={handleChange} required />
+                        <div className="grid gap-4 grid-cols-[1fr_0.8fr]">
+                            <Field name="state" label="State" value={formData.state} onChange={handleChange} options={US_STATES} required placeholder="Select" />
+                            <Field name="zipcode" label="ZIP code" value={formData.zipcode} onChange={handleChange} required />
                         </div>
-                        <Input name="email" label="Email" value={formData.email} onChange={handleChange} required />
-                        <Input name="phoneNumber" label="Mobile Number" value={formData.phoneNumber} onChange={handleChange} placeholder="e.g. +1 555 123 4567" required />
-                        <Input name="address" label="Address" value={formData.address} onChange={handleChange} required />
-                        <div className="grid grid-cols-3 gap-4">
-                            <Input name="city" label="City" value={formData.city} onChange={handleChange} required />
-                            {/* State is handled below in Identity section logic usually, but let's just make it generic text here if not doc-bound? 
-                                 Actually, for simplicity, let's keep State in the ID section as it was logic-bound there. 
-                                 Or duplicate display? */}
-                            <Input name="zipcode" label="Zip Code" value={formData.zipcode} onChange={handleChange} required />
+                    </CardBody>
+                </Card>
+
+                <Card>
+                    <CardHeader
+                        title="Identity & verification"
+                        description="Required to reach compliance level 2 and higher limits."
+                        action={<ShieldCheck className="size-5 text-brand-500" aria-hidden />}
+                    />
+                    <CardBody className="grid gap-4 sm:grid-cols-2">
+                        <Field name="gender" label="Gender" value={formData.gender} onChange={handleChange} options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'other', label: 'Other' }]} required />
+                        <Field name="occupation" label="Occupation" value={formData.occupation} onChange={handleChange} required placeholder="Software engineer" />
+                        <Field name="docType" label="Identity document" value={formData.docType} onChange={handleChange} options={DOC_TYPES} required />
+                        <Field name="docNumber" label={isLicense ? 'License number' : 'Passport number'} value={formData.docNumber} onChange={handleChange} required />
+                        {isLicense ? (
+                            <Field name="state" label="Issuing state" value={formData.state} onChange={handleChange} options={US_STATES} required hint="Uses your residential state." />
+                        ) : (
+                            <Field name="issuingCountry" label="Issuing country" value={formData.issuingCountry} onChange={handleChange} options={COUNTRIES} required />
+                        )}
+                        <Field name="expirationDate" label="Expiration date" type="date" value={formData.expirationDate} onChange={handleChange} required />
+                        <Field
+                            name="ssn"
+                            label="Social Security number"
+                            value={formData.ssn}
+                            onChange={handleChange}
+                            inputMode="numeric"
+                            autoComplete="off"
+                            placeholder={formData.ssnLast4 ? `On file (•••-••-${formData.ssnLast4}); enter to replace` : '078-05-1120'}
+                            hint="Optional. Needed for Level 2 together with a verified ID. Sent as a declared document (type ssn); never shown again after saving."
+                        />
+                    </CardBody>
+                    {error && (
+                        <div className="px-6 pb-5">
+                            <Alert tone="danger" title="Could not sync with Inyo">{error}</Alert>
                         </div>
-                    </div>
-
-                    <h3 className="text-lg font-bold text-gray-700 mb-3">Identity & Verification</h3>
-                    <Input
-                        name="gender"
-                        label="Gender"
-                        value={formData.gender}
-                        onChange={handleChange}
-                        options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'other', label: 'Other' }]}
-                        required
-                    />
-                    <Input name="occupation" label="Occupation" value={formData.occupation} onChange={handleChange} required />
-
-                    <Input
-                        name="docType"
-                        label="Identity Document"
-                        value={formData.docType}
-                        onChange={handleChange}
-                        options={[
-                            { value: 'passport', label: 'Passport' },
-                            { value: 'driver_license', label: "Driver's License" }
-                        ]}
-                        required
-                    />
-
-                    {formData.docType === 'passport' ? (
-                        <>
-                            <Input
-                                name="docNumber"
-                                label="Passport Number"
-                                value={formData.docNumber}
-                                onChange={handleChange}
-                                required
-                            />
-                            <Input
-                                name="issuingCountry"
-                                label="Issuing Country"
-                                value={formData.issuingCountry}
-                                onChange={handleChange}
-                                options={COUNTRIES}
-                                required
-                            />
-                        </>
-                    ) : (
-                        <>
-                            <Input
-                                name="docNumber"
-                                label="Document Number"
-                                value={formData.docNumber}
-                                onChange={handleChange}
-                                required
-                            />
-                            <Input
-                                name="state"
-                                label="Issuing State"
-                                value={formData.state}
-                                onChange={handleChange}
-                                options={US_STATES}
-                                required
-                            />
-                        </>
                     )}
-
-                    <Input name="expirationDate" label="Expiration Date" type="date" value={formData.expirationDate} onChange={handleChange} required />
-
-                    <button type="submit" className="btn btn-primary mt-4" disabled={loading}>
-                        {loading ? 'Saving...' : 'Continue to Dashboard'}
-                    </button>
-                </form>
-            </div>
+                    <CardFooter>
+                        <p className="text-xs text-ink-500">Sandbox note: reserved numbers pass the KYC format check — passport 999000001 (US), driver&apos;s license 99900001 (US, PA only). To also decide a KYC widget session without a camera use passport 999003001 (approved) or driver&apos;s license 99900101 (approved, PA). SSN test value: 078-05-1120.</p>
+                        <Button type="submit" loading={loading} icon={hasProfile ? Save : undefined} iconRight={hasProfile ? undefined : ArrowRight}>
+                            {hasProfile ? 'Save changes' : 'Save and continue'}
+                        </Button>
+                    </CardFooter>
+                </Card>
+            </form>
         </div>
     );
 };
