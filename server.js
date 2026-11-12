@@ -396,9 +396,8 @@ const saveKyc = (userId, session) => {
 
 // Where the widget sends the user afterwards. The redirect carries sessionId/status/sig; this sample
 // only uses it as a cue to re-read the session (verifying `sig` needs the tenant's webhook secret).
-// It must not point at a loopback host: Inyo's WAF (AWS managed rule EC2MetaDataSSRF_BODY) blocks
-// request bodies that mention localhost/127.0.0.1 as a suspected SSRF, and the error surfaces as a
-// KYC_VALIDATION_ERROR with a "403 Forbidden" HTML page. Set APP_URL to a non-loopback origin
+// It must not point at a loopback host: the API rejects request bodies that mention
+// localhost/127.0.0.1 (KYC_VALIDATION_ERROR). Set APP_URL to a non-loopback origin
 // (http://lvh.me:3000 resolves to 127.0.0.1 through public DNS; a hosts-file alias or a tunnel also work).
 const LOOPBACK = /^(localhost|127(\.\d+){3}|0\.0\.0\.0|\[?::1\]?)$/i;
 // Public origin of the app (APP_URL, else the caller's Origin/Referer), without a trailing slash.
@@ -412,7 +411,7 @@ const isLoopbackUrl = (base) => {
 const kycRedirectUrl = (req) => {
   const base = appOrigin(req);
   if (isLoopbackUrl(base)) {
-    const err = new Error(`redirectUrl would be "${base || "(empty)"}". Inyo's WAF rejects loopback hosts in the kycSession body (rule EC2MetaDataSSRF_BODY). Set APP_URL in .env to a non-loopback origin, e.g. http://lvh.me:3000 (resolves to 127.0.0.1), and open the app from that origin.`);
+    const err = new Error(`redirectUrl would be "${base || "(empty)"}". Inyo rejects loopback hosts in the kycSession body. Set APP_URL in .env to a non-loopback origin, e.g. http://lvh.me:3000 (resolves to 127.0.0.1), and open the app from that origin.`);
     err.status = 400;
     throw err;
   }
@@ -422,11 +421,9 @@ const kycRedirectUrl = (req) => {
 // ---------------------------------------------------------------------------
 // 3DS redirect landing pages (docs: tokenizing-cards threeDSData.successUrl / failUrl)
 // ---------------------------------------------------------------------------
-// In redirect mode the token carries successUrl/failUrl pointing here. The docs describe a browser
-// redirect at the end of the challenge; on stage the gateway never redirects to them (the challenge
-// started by the core has no redirect target), so these only exist so the URLs in the token resolve.
-// If a browser does land here, the page relays the payload to the app window and the card is re-read
-// from the core. The verification result itself arrives through the gateway webhook below.
+// In redirect mode the token carries successUrl/failUrl pointing here, and the issuer sends the
+// browser to one of them at the end of the challenge. The page relays the payload to the app window
+// (opener or parent) and the app re-reads the card from Inyo, which is the status that counts.
 const formBody = bodyParser.urlencoded({ extended: false });
 const threeDsLanding = (outcome) => (req, res) => {
   const payload = { ...(req.query || {}), ...(req.body && typeof req.body === "object" ? req.body : {}) };
@@ -448,17 +445,17 @@ app.all("/api/3ds/fail", formBody, threeDsLanding("fail"));
 // ---------------------------------------------------------------------------
 // Gateway webhook: payment status changed (card verification result)
 // ---------------------------------------------------------------------------
-// The core learns the 3DS outcome from the gateway's "payment status changed" event
-// (POST /webhooks/inyogateway/payments/event on the core; see docs/inyo-docs-audit.md). While that
-// webhook is not wired for this tenant, the gateway team can point the same notification at this
-// BFF (through a tunnel such as `ngrok http 3001`). Payload, as the core's sample shows:
-//   { paymentId, parentPaymentId, externalPaymentId, status: "AUTHORIZED" | "DECLINED" | ...,
-//     approved, message, responseCode, avsResult, cvcResult, ... }
-// The card is matched by the gateway paymentId kept from POST /fundingAccounts, or by
-// externalPaymentId (the core builds it as "<prefix><funding account id>"). AUTHORIZED marks the
-// local card Verified and DECLINED marks it Rejected, mirroring the core's own mapping; every other
-// status is stored without changing the card. The core remains the source of truth: a card verified
-// only here still fails on POST /fx/transactions until the core receives the same event.
+// Inyo learns the card verification outcome from the gateway's "payment status changed" event.
+// Optionally, Inyo can also deliver that notification to this BFF (exposed through a public URL,
+// e.g. a tunnel) so the result is visible here. Payload:
+//   { agentId, event: "CHECK", status: "AUTHORIZED" | "DECLINED" | "VOIDED" | ..., statusCode,
+//     statusDescription, paymentId, externalPaymentId: "CHECK_ACCOUNT_<fundingAccountId>",
+//     amount, eventDate, oldStatus, newStatus }
+// The card is matched by the gateway paymentId kept from POST /fundingAccounts, or by the
+// externalPaymentId suffix (the funding account id). AUTHORIZED marks the local card Verified and
+// DECLINED marks it Rejected; every other status is stored without changing the card. Inyo remains
+// the source of truth: a card verified only here is still refused by POST /fx/transactions until
+// Inyo reports the same result.
 // Optional Basic Auth: set WEBHOOK_BASIC_USER / WEBHOOK_BASIC_PASS (the gateway's notification
 // agent supports BASIC); when unset, every caller is accepted and a warning is logged once.
 const cardByGatewayPaymentId = (paymentId) => {
@@ -512,11 +509,10 @@ const gatewayWebhook = (req, res) => {
   const match = cardByWebhookEvent(paymentId, externalPaymentId);
   const newStatus = WEBHOOK_STATUS_MAP[status] || null;
   if (match) {
-    // Observed on stage (2026-11-12): a CHECK produces two events, AUTHORIZED (the $0 verification)
-    // and then VOIDED (its reversal, "Payment Approved") with a different paymentId. Only AUTHORIZED
-    // and DECLINED decide the card; VOIDED and the rest are kept as the last event without touching
-    // the decision. The webhook paymentIds also differ from gateway.paymentId returned at creation,
-    // so the match is effectively by externalPaymentId.
+    // A CHECK produces two events: AUTHORIZED (the $0 verification) and then VOIDED (its reversal)
+    // with a different paymentId. Only AUTHORIZED and DECLINED decide the card; VOIDED and the rest
+    // are kept as the last event without touching the decision. The event paymentIds also differ
+    // from gateway.paymentId returned at creation, so the match is effectively by externalPaymentId.
     const apiResponse = { ...(match.data.apiResponse || {}) };
     const event = { status, statusCode: payload.statusCode ?? payload.responseCode ?? null, message: payload.statusDescription ?? payload.message ?? null, paymentId, eventDate: payload.eventDate ?? null, receivedAt, appliedStatus: newStatus };
     const next = { ...match.data, apiResponse, lastGatewayEvent: event };
@@ -535,14 +531,12 @@ const gatewayWebhook = (req, res) => {
   res.json({ received: true, receivedAt, status: status || null, paymentId, externalPaymentId, matchedCard: match ? { id: match.row.id, newStatus } : null });
 };
 // A GET (someone checking the URL in a browser) just confirms the endpoint is reachable.
-app.get(["/api/webhooks/gateway", "/api/webhooks/inyogateway/payments/event"], (req, res) => {
+app.get("/api/webhooks/gateway", (req, res) => {
   res.json({ ok: true, expects: "POST application/json { paymentId, externalPaymentId, status, approved, message, responseCode }", basicAuth: !!(process.env.WEBHOOK_BASIC_USER || process.env.WEBHOOK_BASIC_PASS) });
 });
 app.post("/api/webhooks/gateway", webhookAuth, gatewayWebhook);
-// Same path the core exposes, so the gateway side can reuse its notification config verbatim.
-app.post("/api/webhooks/inyogateway/payments/event", webhookAuth, gatewayWebhook);
 
-// Recent events plus the public URL to hand to the gateway team (read from a local ngrok, if running).
+// Recent events plus the public URL to register with Inyo (read from a local ngrok, if one is running).
 app.get("/api/webhooks/events", authenticateToken, async (req, res) => {
   const events = db.prepare("SELECT id, receivedAt, paymentId, externalPaymentId, status, matchedCardId, payload FROM webhook_events ORDER BY id DESC LIMIT 30").all()
     .map((e) => ({ ...e, payload: JSON.parse(e.payload) }));
@@ -550,7 +544,7 @@ app.get("/api/webhooks/events", authenticateToken, async (req, res) => {
   try {
     const tunnels = await axios.get("http://127.0.0.1:4040/api/tunnels", { timeout: 500 });
     publicUrl = (tunnels.data?.tunnels || []).find((t) => String(t.public_url).startsWith("https"))?.public_url || null;
-  } catch { /* no local ngrok */ }
+  } catch { /* no local tunnel */ }
   res.json({ events, publicUrl, path: "/api/webhooks/gateway", basicAuth: !!(process.env.WEBHOOK_BASIC_USER || process.env.WEBHOOK_BASIC_PASS) });
 });
 
@@ -1179,7 +1173,7 @@ app.post("/api/payment-methods/cards", authenticateToken, async (req, res) => {
     res.json({ success: true, id, externalId, status, redirectAcsUrl, gatewayPaymentId: responseData.gateway?.paymentId || null });
   } catch (error) {
     const body = error.response?.data;
-    // The core answers 422 with the funding account itself when the gateway rejects the card.
+    // Inyo answers 422 with the funding account itself when the gateway rejects the card.
     if (error.response?.status === 422 && body?.status === "Rejected") {
       const info = describeUpstream(error);
       log.error(`card rejected by gateway: ${body.statusMessage} ${JSON.stringify(body.gateway || {})}`);
@@ -1310,7 +1304,7 @@ app.get("/api/payment-methods", authenticateToken, (req, res) => {
 });
 
 // Docs (sender-funding-account, "Deactivating a Funding Account"): DELETE is a soft, one-way deactivation.
-// The core keeps the row with isActive=false; this sample drops its local copy once the core confirms.
+// Inyo keeps the row with isActive=false; this sample drops its local copy once Inyo confirms.
 app.delete("/api/payment-methods/:id", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const { id } = req.params;
@@ -1370,9 +1364,9 @@ app.get(
       const previous = currentData.apiResponse || {};
       const coreStatus = apiRes.data.status;
       const applied = currentData.gatewayEvent?.appliedStatus || null;
-      // The core only leaves ActionRequired through its own gateway webhook. When that webhook reached
-      // this BFF but not the core, keep the gateway's verdict as the card status and record what the
-      // core says in coreStatus, so the UI can show both instead of flip-flopping on every sync.
+      // Inyo only leaves ActionRequired once it receives the gateway's result. When that result reached
+      // this BFF (webhook) but Inyo still answers ActionRequired, keep the gateway's verdict as the card
+      // status and record Inyo's answer in coreStatus, so the UI shows both instead of flip-flopping.
       const coreStillPending = /^action\s*required$/i.test(String(coreStatus || "").replace(/\s+/g, ""));
       const newData = {
         ...currentData,
@@ -1384,7 +1378,7 @@ app.get(
           gateway: apiRes.data.gateway || previous.gateway || null,
         },
       };
-      if (applied && coreStillPending) log.warn(`card ${id}: gateway webhook said ${currentData.gatewayEvent.status} but the core still answers ${coreStatus} (core has not received the webhook)`);
+      if (applied && coreStillPending) log.warn(`card ${id}: gateway webhook said ${currentData.gatewayEvent.status} but Inyo still answers ${coreStatus}`);
 
       db.prepare("UPDATE payment_methods SET data = ? WHERE id = ?").run(
         JSON.stringify(newData),

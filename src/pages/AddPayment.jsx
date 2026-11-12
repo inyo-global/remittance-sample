@@ -24,9 +24,8 @@ const TOKENIZER_SRC = 'https://cdn.simpleps.com/sandbox/inyo.js';
 // enablePostMessage and the result arrives as a window "message" (page URL registered with Inyo first);
 // "off" tokenizes with enable:false and the challenge comes from POST /fundingAccounts (ActionRequired).
 const TOKENIZER_3DS_MODE = 'off';
-// successUrl/failUrl point at the page origin (e.g. http://localhost:3000): the 3DS provider redirects the
-// user's browser there, inside the challenge iframe, so a local host works. Unlike the KYC host, the
-// tokenizer host accepted "localhost" in request bodies (checked 2026-11-11), so APP_URL is not needed here.
+// successUrl/failUrl point at the page origin (e.g. http://localhost:3000): the issuer sends the user's
+// browser there at the end of the challenge, so a local host works and APP_URL is not needed here.
 const threeDsData = (mode) => {
     if (mode === 'redirect') {
         const origin = window.location.origin;
@@ -218,11 +217,11 @@ const AddPayment = ({ user }) => {
                                 // response has no redirectUrl, and its window "message" listener for any JSON
                                 // postMessage that is not a 3DS success (fingerprint iframes, Plaid, ...). In
                                 // both cases the token itself may already be minted (kept in tokenData). Hand
-                                // it over and let the core drive 3DS; with no token yet, keep waiting for the
+                                // it over and let Inyo drive 3DS; with no token yet, keep waiting for the
                                 // real successCallback instead of aborting.
                                 const data = tokenizerRef.current?.tokenData?.additionalData;
                                 if (data?.token) {
-                                    setNotice(`inyo.js reported GATEWAY_ERROR (${resp.message}): the card-token response carried no 3DS data (redirectUrl). The token ···· ${data.lastFourDigits || ''} was issued, so the sample continues and lets the core run 3DS.`);
+                                    setNotice(`inyo.js reported GATEWAY_ERROR (${resp.message}): the card-token response carried no 3DS data (redirectUrl). The token ···· ${data.lastFourDigits || ''} was issued, so the sample continues and lets Inyo run 3DS.`);
                                     settleTokenizer();
                                     registerCard(data);
                                 } else {
@@ -320,9 +319,9 @@ const AddPayment = ({ user }) => {
 
     // Docs (handling-3d-secure): in PostMessage mode the ACS page posts {paymentId, externalPaymentId,
     // amount, approved} to the parent window, only to pages whose URL Inyo registered beforehand. In
-    // redirect mode the provider POSTs the result to successUrl/failUrl; those land on the BFF
+    // redirect mode the issuer sends the browser to successUrl/failUrl; those land on the BFF
     // (/api/3ds/*), which answers a page that relays the payload here from the app's own origin.
-    // Whatever the payload says, the funding account status read from the core is what decides.
+    // Whatever the payload says, the funding account status read from Inyo is what decides.
     useEffect(() => {
         if (!challengeOpen) return undefined;
         const onMessage = (event) => {
@@ -345,9 +344,9 @@ const AddPayment = ({ user }) => {
         return () => window.removeEventListener('message', onMessage);
     }, [challengeOpen, confirmCard]);
 
-    // While the challenge is open, poll the core (GET /fundingAccounts/{id} through the BFF sync) every
-    // 5 s: the gateway reports the result to the core by webhook, so the status leaves ActionRequired
-    // there whatever happens in the browser (postMessage, redirect or nothing). Stops after 10 minutes.
+    // While the challenge is open, poll Inyo (GET /fundingAccounts/{id} through the BFF sync) every
+    // 5 s: the gateway reports the result to Inyo, so the status leaves ActionRequired there whatever
+    // happens in the browser (postMessage, redirect or nothing). Stops after 10 minutes.
     useEffect(() => {
         if (!challengeOpen || !pendingCardId) return undefined;
         let stopped = false;
@@ -591,7 +590,7 @@ const AddPayment = ({ user }) => {
             >
                 <div className="space-y-4 px-6 py-5">
                     <p className="text-sm text-ink-600">
-                        Waiting for the challenge{pendingPaymentId ? <> (gateway payment <code>{pendingPaymentId}</code>)</> : null}. This page also re-reads the card from Inyo every 5 seconds, so it closes as soon as the core receives the gateway's result, whatever happens in the other tab.
+                        Waiting for the challenge{pendingPaymentId ? <> (gateway payment <code>{pendingPaymentId}</code>)</> : null}. This page also re-reads the card from Inyo every 5 seconds, so it closes as soon as Inyo reports the result, whatever happens in the other tab.
                     </p>
                     {notice && <Alert tone="warning" title="Notice">{notice}</Alert>}
                     <div className="flex flex-wrap gap-2">

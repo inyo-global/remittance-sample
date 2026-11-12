@@ -98,7 +98,7 @@ const PaymentMethods = ({ user }) => {
         return () => { cancelled = true; };
     }, [user?.userId, load]);
 
-    // GET /fundingAccounts/{id} through the BFF: the core is the source of truth for the status.
+    // GET /fundingAccounts/{id} through the BFF: Inyo is the source of truth for the status.
     const sync = useCallback(async (method) => {
         setSyncing(method.id);
         try {

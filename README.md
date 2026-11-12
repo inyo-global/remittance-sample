@@ -31,8 +31,6 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 *   `lucide-react` icons, shared UI primitives in `src/components/ui/`
 *   Country-specific forms are generated from the Inyo JSON schemas by `src/components/SchemaForm.jsx`
 
-See `docs/inyo-docs-audit.md` for a comparison of this sample against the official docs and the list of pending features.
-
 ### Environment Variables (.env)
 You must configure your credentials to authenticate with the test environment. The docs call it **Sandbox** and write its host as `https://{FQDN}`: Inyo gives you the FQDN together with the tenant and agent credentials at onboarding. For the Remittances API this is currently `https://api.stage.inyoplatform.com`; the older `api.sandbox.inyoplatform.com` host answers `403 blocked` and is not the Remittances test core.
 
