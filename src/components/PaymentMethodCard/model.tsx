@@ -10,7 +10,7 @@ export interface PaymentMethodCardProps {
     children?: ReactNode;
 }
 
-/** Gateway webhook echo stored next to the funding account (see server.js gatewayWebhook). */
+/** Gateway webhook echo stored next to the funding account (see server/services/fundingAccounts.ts gatewayWebhook). */
 export interface GatewayEvent {
     status?: string;
     receivedAt?: string;

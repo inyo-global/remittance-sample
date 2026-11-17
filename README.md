@@ -16,12 +16,17 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
     *   Orchestrates calls to the **Inyo test environment** (what the docs call *Sandbox*).
 3.  **Inyo API**: The financial engine handling KYC, Banking, and Settlements.
 
+### BFF layout (`server/`)
+*   `index.ts` starts the server; `app.ts` builds the Express app (`createApp`) with every middleware and one router per domain, and is what the tests import.
+*   `config.ts` reads `.env` once; `db.ts` opens SQLite and creates the schema; `inyo/client.ts` is the single axios instance (mTLS, request logging, the troubleshooting hints).
+*   `middlewares/` holds the JWT check, the webhook Basic Auth, the request log and the error handler. `routes/` has one Express `Router` per domain (auth, profile, catalog, beneficiaries, fundingAccounts, transactions, kyc, documents, webhooks, debug); routes parse the request and answer, the logic that mixes Inyo and the database lives in `services/`.
+
 ---
 
 ## 2. Setup & Configuration
 
 ### Prerequisites
-*   Node.js v22 (see `.nvmrc`)
+*   Node.js 22.18 or newer (see `.nvmrc`): the BFF is TypeScript and runs directly on Node's built-in type stripping, no build step
 *   npm or yarn
 *   Network access to the Inyo test environment: a Cloudflare mTLS client certificate **and** an allowlisted egress IP. A `403` with an HTML body means the IP is not allowlisted.
 
@@ -78,7 +83,7 @@ AGENT_KEY=your_agent_key        # x-agent-api-key
 ### Installation
 ```bash
 npm install
-npm run dev:full
+npm run dev:full   # BFF on :3001 (node server/index.ts) + Vite on :3000
 ```
 
 ### Tests
@@ -87,7 +92,7 @@ npm test          # one run
 npm run test:watch
 npm run typecheck # tsc --noEmit (also runs as part of npm run build)
 ```
-The suite uses [Vitest](https://vitest.dev) with two projects: the React app under happy-dom + Testing Library (`src/**/*.test.jsx`) and the BFF under Node + supertest (`test/server/`). Calls to Inyo are intercepted in-process, so no credentials, network or `.env` are needed; the BFF tests run against an in-memory SQLite database (`DB_PATH=:memory:`).
+The suite uses [Vitest](https://vitest.dev) with two projects: the React app under happy-dom + Testing Library (`src/**/*.test.jsx`) and the BFF under Node + supertest (`test/server/`, plus unit tests for config, the Inyo client, middlewares and services in `test/server/unit/`). Calls to Inyo are intercepted in-process, so no credentials, network or `.env` are needed; the BFF tests run against an in-memory SQLite database (`DB_PATH=:memory:`).
 
 ---
 

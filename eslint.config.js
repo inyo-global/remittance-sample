@@ -32,7 +32,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}'],
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,
@@ -48,8 +48,12 @@ export default defineConfig([
     },
   },
   {
-    files: ['server.js'],
+    files: ['server/**/*.ts'],
+    extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: { globals: globals.node },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }],
+    },
   },
   {
     files: ['test/**/*.{js,jsx}', 'src/**/*.test.{js,jsx}', 'vitest.config.js'],
