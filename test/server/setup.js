@@ -1,4 +1,4 @@
-// Runs before server.js is imported: isolate the BFF from the developer's .env and from the real DB.
+// Runs before server/app.ts is imported: isolate the BFF from the developer's .env and from the real DB.
 process.env.NODE_ENV = 'test';
 process.env.DB_PATH = ':memory:';
 process.env.DOTENV_CONFIG_QUIET = 'true';

@@ -4,24 +4,24 @@
   "version": "0.0.0",
   "type": "module",
   "engines": {
-    "node": "22.23.4"
+    "node": ">=22.18"
   },
   "scripts": {
     "dev": "vite",
-    "dev:full": "concurrently \"node server.js\" \"vite\"",
-    "build": "tsc --noEmit && vite build",
+    "dev:full": "concurrently \"node server/index.ts\" \"vite\"",
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
+    "start": "node server/index.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.5",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.5.0",
-    "body-parser": "^2.2.1",
     "concurrently": "^9.2.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -41,6 +41,11 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.12",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",

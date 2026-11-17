@@ -1,5 +1,5 @@
 /**
- * Shapes the frontend reads from the local BFF (server.js). Inyo payloads are stored as-is in the
+ * Shapes the frontend reads from the local BFF (server/). Inyo payloads are stored as-is in the
  * `data` columns, so those parts are typed by the fields the UI actually reads, plus an index
  * signature for everything else the API may send.
  */

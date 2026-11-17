@@ -80,7 +80,7 @@ export const errorMessage = (err: unknown, fallback = 'Something went wrong'): s
     const e: unknown = err.error ?? err;
     if (typeof e === 'string') return e;
     if (!isObject(e)) return fallback;
-    // Structured upstream error from the BFF (see upstreamError in server.js)
+    // Structured upstream error from the BFF (see server/middlewares/errorHandler.ts)
     if (isUpstream(e)) {
         const head = `Inyo ${e.status ?? 'no response'} on ${e.method} ${e.path}`;
         const detail = e.body && typeof e.body === 'object' ? JSON.stringify(e.body) : str(e.body) || e.message;

@@ -1,6 +1,6 @@
 import axios, { AxiosError, type AxiosRequestConfig, type Method } from 'axios';
 
-// All calls go to the local BFF (server.js), which holds the Inyo credentials.
+// All calls go to the local BFF (server/), which holds the Inyo credentials.
 // Vite proxies /api -> http://localhost:3001 in development.
 const api = axios.create({ baseURL: '/api' });
 

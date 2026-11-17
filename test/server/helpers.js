@@ -2,12 +2,14 @@ import { createRequire } from 'module';
 import request from 'supertest';
 import { vi } from 'vitest';
 
-// server.js loads axios through createRequire (CommonJS build). Using the same loader here returns the
-// same singleton, so replacing its adapter intercepts every upstream call the BFF makes.
+// AxiosError is only needed to build realistic failures; any axios build works for that.
 const require = createRequire(import.meta.url);
 export const axios = require('axios');
 
 export const API_BASE = 'https://api.example.test/organizations/sample';
+
+// The adapter of the most recent mockUpstream(); createApp() receives it through loadApp().
+let currentAdapter = null;
 
 /**
  * In-process stand-in for the Inyo API. Register handlers with `on(method, path | RegExp, reply)`;
@@ -37,7 +39,7 @@ export function mockUpstream() {
     }
     return response;
   });
-  axios.defaults.adapter = adapter;
+  currentAdapter = adapter;
   return {
     calls,
     adapter,
@@ -57,10 +59,11 @@ export function mockUpstream() {
   };
 }
 
-/** Fresh import of the BFF (each test file gets its own module registry, hence its own in-memory DB). */
+/** A fresh BFF with its own in-memory database and this file's upstream mock (see setup.js for the env). */
 export async function loadApp() {
-  const mod = await import('../../server.js');
-  return { app: mod.app, db: mod.db };
+  const { createApp } = await import('../../server/app.ts');
+  const { app, ctx } = createApp({ adapter: currentAdapter ?? undefined });
+  return { app, db: ctx.db, ctx };
 }
 
 let counter = 0;
