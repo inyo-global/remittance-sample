@@ -29,7 +29,8 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 *   React 19 + Vite 7, React Router 7, written in TypeScript (`strict`); shared API/domain types live in `src/types/`
 *   Tailwind CSS v4 (`@tailwindcss/vite`) with design tokens in `src/index.css` (`@theme`)
 *   `lucide-react` icons, shared UI primitives in `src/components/ui/`
-*   Country-specific forms are generated from the Inyo JSON schemas by `src/components/SchemaForm.tsx`
+*   Country-specific forms are generated from the Inyo JSON schemas by `src/components/SchemaForm/`
+*   Pages and shared components are folders with three files: `model.tsx` (a `useX()` hook with state, effects and handlers, plus pure helpers), `view.tsx` (JSX only) and `index.tsx` (`const props = useX(ownProps); return <View {...props} />`). Primitives in `src/components/ui/` stay single-file.
 
 ### Environment Variables (.env)
 You must configure your credentials to authenticate with the test environment. The docs call it **Sandbox** and write its host as `https://{FQDN}`: Inyo gives you the FQDN together with the tenant and agent credentials at onboarding. For the Remittances API this is currently `https://api.stage.inyoplatform.com`; the older `api.sandbox.inyoplatform.com` host answers `403 blocked` and is not the Remittances test core.
@@ -371,7 +372,7 @@ Before executing a transaction, it is crucial to verify that the user has not ex
 *   **Time Windows**: Limits are calculated across three rolling windows: **24 Hours**, **30 Days**, and **180 Days**.
 *   **Upgrading**: You can query the API to see exactly which fields (e.g., "Occupation", "ID Document") are missing to upgrade to the next level.
 
-> **UI Implementation Reference**: See `src/components/Sidebar.tsx` (Left Menu Widget) and `src/pages/Compliance.tsx` for examples of how to visualize usage and requirements.
+> **UI Implementation Reference**: See `src/components/Sidebar/` (Left Menu Widget) and `src/pages/Compliance/` for examples of how to visualize usage and requirements.
 
 **Check Limits & Usage**:
 *   **Endpoint**: `GET .../fx/participants/{id}/limits`
