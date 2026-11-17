@@ -26,10 +26,10 @@ Direct communication between a Frontend (Browser/Mobile) and the Inyo Core API i
 *   Network access to the Inyo test environment: a Cloudflare mTLS client certificate **and** an allowlisted egress IP. A `403` with an HTML body means the IP is not allowlisted.
 
 ### Frontend stack
-*   React 19 + Vite 7, React Router 7
+*   React 19 + Vite 7, React Router 7, written in TypeScript (`strict`); shared API/domain types live in `src/types/`
 *   Tailwind CSS v4 (`@tailwindcss/vite`) with design tokens in `src/index.css` (`@theme`)
 *   `lucide-react` icons, shared UI primitives in `src/components/ui/`
-*   Country-specific forms are generated from the Inyo JSON schemas by `src/components/SchemaForm.jsx`
+*   Country-specific forms are generated from the Inyo JSON schemas by `src/components/SchemaForm.tsx`
 
 ### Environment Variables (.env)
 You must configure your credentials to authenticate with the test environment. The docs call it **Sandbox** and write its host as `https://{FQDN}`: Inyo gives you the FQDN together with the tenant and agent credentials at onboarding. For the Remittances API this is currently `https://api.stage.inyoplatform.com`; the older `api.sandbox.inyoplatform.com` host answers `403 blocked` and is not the Remittances test core.
@@ -83,6 +83,7 @@ npm run dev:full
 ```bash
 npm test          # one run
 npm run test:watch
+npm run typecheck # tsc --noEmit (also runs as part of npm run build)
 ```
 The suite uses [Vitest](https://vitest.dev) with two projects: the React app under happy-dom + Testing Library (`src/**/*.test.jsx`) and the BFF under Node + supertest (`test/server/`). Calls to Inyo are intercepted in-process, so no credentials, network or `.env` are needed; the BFF tests run against an in-memory SQLite database (`DB_PATH=:memory:`).
 
@@ -370,7 +371,7 @@ Before executing a transaction, it is crucial to verify that the user has not ex
 *   **Time Windows**: Limits are calculated across three rolling windows: **24 Hours**, **30 Days**, and **180 Days**.
 *   **Upgrading**: You can query the API to see exactly which fields (e.g., "Occupation", "ID Document") are missing to upgrade to the next level.
 
-> **UI Implementation Reference**: See `src/components/Sidebar.jsx` (Left Menu Widget) and `src/pages/Compliance.jsx` for examples of how to visualize usage and requirements.
+> **UI Implementation Reference**: See `src/components/Sidebar.tsx` (Left Menu Widget) and `src/pages/Compliance.tsx` for examples of how to visualize usage and requirements.
 
 **Check Limits & Usage**:
 *   **Endpoint**: `GET .../fx/participants/{id}/limits`

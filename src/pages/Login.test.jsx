@@ -29,10 +29,10 @@ describe('Login', () => {
     expect(localStorage.getItem('authToken')).toBe('jwt-1');
   });
 
-  it('accepts a flat user response and keeps an existing userId', async () => {
+  it('keeps an existing userId and does not store a token when none is returned', async () => {
     const user = userEvent.setup();
     const onLogin = vi.fn();
-    request.mockResolvedValue({ id: 'u2', userId: 'keep-me' });
+    request.mockResolvedValue({ user: { id: 'u2', userId: 'keep-me' } });
     renderWithProviders(<Login onLogin={onLogin} />);
     await fill(user);
     await user.click(screen.getByRole('button', { name: /log in/i }));
