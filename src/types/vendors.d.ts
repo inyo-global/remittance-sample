@@ -37,8 +37,6 @@ interface PlaidLinkError {
 
 interface PlaidLinkHandler {
     open: () => void;
-    exit?: () => void;
-    destroy?: () => void;
 }
 
 interface PlaidLinkOptions {

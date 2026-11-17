@@ -11,7 +11,7 @@ import { request } from '../api';
 import { amount, dateTime, errorMessage, money, rate } from '../lib/format';
 import { TONE_DOT, TONE_TEXT, complianceTone, historyTone, isReversible, payoutTone } from '../lib/status';
 import logo from '../assets/inyo-logo.png';
-import type { Transaction, TransactionCreateResponse, TransactionData, TransactionHistoryRow, User } from '../types';
+import type { Transaction, TransactionCreateResponse, TransactionData, TransactionHistoryRow} from '../types';
 
 /** The receipt shows either a stored row (from the history) or the POST /transactions response. */
 type ReceiptTransaction = Transaction | TransactionCreateResponse;
@@ -72,7 +72,7 @@ function StatusTimeline({ history, loading, error }: { history: TransactionHisto
  * Regulated receipt. Per the docs, exchange rate, fees, total, receive amount and
  * the `receipt` disclosures must be shown exactly as returned by the API.
  */
-const Receipt = (_props: { user?: User }) => {
+const Receipt = () => {
     const { state } = useLocation() as { state: ReceiptLocationState | null };
     const navigate = useNavigate();
     const toast = useToast();

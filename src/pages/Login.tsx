@@ -26,7 +26,7 @@ const Login = ({ onLogin }: LoginProps) => {
         setError(null);
         try {
             const res = await request<AuthResponse>('post', '/login', formData);
-            const userData: User = { ...(res.user || (res as unknown as User)) };
+            const userData: User = { ...res.user };
             if (userData.id && !userData.userId) userData.userId = userData.id;
             if (res.token) localStorage.setItem('authToken', res.token);
             await onLogin(userData);

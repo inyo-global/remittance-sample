@@ -411,15 +411,6 @@ export interface FieldError {
     error: string;
 }
 
-/** The error shapes `request()` throws: the BFF body when there is a response, otherwise the axios error. */
-export type ApiError =
-    | string
-    | { error: UpstreamError | LocalError | string }
-    | { errors?: FieldError[] | Record<string, string | string[]>; message?: string; details?: { message?: string } | string }
-    | Error
-    | null
-    | undefined;
-
 // ---------------------------------------------------------------- send-money flow state
 
 export interface TransactionDraft {

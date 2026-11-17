@@ -11,11 +11,7 @@ import useQuoteCountdown from '../lib/useQuoteCountdown';
 import { amount, errorMessage, humanize, maskAccount, money, rate } from '../lib/format';
 import { methodSubtitle, methodTitle } from '../lib/paymentMethods';
 import { cx } from '../lib/cx';
-import type { PayoutMethod, TransactionCreateResponse, User } from '../types';
-
-export interface ReviewTransactionProps {
-    user?: User | null;
-}
+import type { PayoutMethod, TransactionCreateResponse} from '../types';
 
 interface SectionProps {
     icon: ComponentType<LucideProps>;
@@ -48,7 +44,7 @@ function Section({ icon: Icon, label, title, subtitle, editTo }: SectionProps) {
  * Step 5: review and POST /fx/transactions. All money values come from the quote
  * (sourceAmount, fee, totalCost, destinationAmount); nothing is recomputed here.
  */
-const ReviewTransaction = (_props: ReviewTransactionProps) => {
+const ReviewTransaction = () => {
     const navigate = useNavigate();
     const { transactionData, setTransactionData } = useContext(TransactionContext)!;
     const { beneficiary, account, paymentMethod, quote } = transactionData;

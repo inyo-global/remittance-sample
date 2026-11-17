@@ -48,7 +48,7 @@ const Signup = ({ onLogin }: SignupProps) => {
         try {
             const res = await request<AuthResponse>('post', '/register', formData);
             if (res.token) localStorage.setItem('authToken', res.token);
-            const userData: User = { ...(res.user || (res as unknown as User)) };
+            const userData: User = { ...res.user };
             if (userData.id && !userData.userId) userData.userId = userData.id;
             await onLogin(userData);
         } catch (err) {

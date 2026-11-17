@@ -13,7 +13,13 @@ import { errorMessage } from '../lib/format';
 import { US_STATES, type Option } from '../lib/usStates';
 import type { ProfileResponse, User } from '../types';
 
-export interface ProfileSavedPatch {
+export interface ProfileProps {
+    user?: User | null;
+    hasProfile: boolean;
+    onSaved?: (patch: Partial<User>) => void;
+}
+
+interface ProfileForm {
     firstName: string;
     lastName: string;
     address: string;
@@ -21,15 +27,6 @@ export interface ProfileSavedPatch {
     state: string;
     zipcode: string;
     phoneNumber: string;
-}
-
-export interface ProfileProps {
-    user?: User | null;
-    hasProfile: boolean;
-    onSaved?: (patch: ProfileSavedPatch) => void;
-}
-
-interface ProfileForm extends ProfileSavedPatch {
     email: string;
     gender: string;
     occupation: string;

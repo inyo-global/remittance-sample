@@ -15,11 +15,7 @@ import { TransactionContext } from '../context/transaction';
 import { inTransferFlow } from '../lib/steps';
 import { cx } from '../lib/cx';
 import { errorMessage, maskAccount } from '../lib/format';
-import type { Bank, BanksResponse, Beneficiary, BeneficiaryAccount, BeneficiaryAccountCreateResponse, BeneficiaryAccountData, JsonSchema, PayoutMethod, User } from '../types';
-
-export interface AddAccountProps {
-    user?: User | null;
-}
+import type { Bank, BanksResponse, Beneficiary, BeneficiaryAccount, BeneficiaryAccountCreateResponse, BeneficiaryAccountData, JsonSchema, PayoutMethod} from '../types';
 
 interface RouteState {
     countryCode?: string;
@@ -46,7 +42,7 @@ const accountSubtitle = (acc: BeneficiaryAccount): string | undefined => {
  * GET /payout/recipientAccounts/schema/{countryCode}; bank codes come from
  * GET /payout/{countryCode}/banks.
  */
-const AddAccount = (_props: AddAccountProps) => {
+const AddAccount = () => {
     const { id } = useParams<{ id: string }>();
     const { state } = useLocation();
     const routeState = (state || null) as RouteState | null;

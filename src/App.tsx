@@ -4,7 +4,7 @@ import { TransactionProvider } from './context/TransactionContext';
 import { ToastProvider } from './components/ui/Toast';
 import Spinner from './components/ui/Spinner';
 import Signup from './pages/Signup';
-import Profile from './pages/Profile';
+import Profile, { type ProfileProps } from './pages/Profile';
 import Dashboard from './pages/Dashboard';
 import Overview from './pages/Overview';
 import Beneficiaries from './pages/Beneficiaries';
@@ -16,15 +16,10 @@ import ReviewTransaction from './pages/ReviewTransaction';
 import Receipt from './pages/Receipt';
 import Compliance from './pages/Compliance';
 import Transactions from './pages/Transactions';
-import Login from './pages/Login';
+import Login, { type LoginProps } from './pages/Login';
 import MainLayout from './components/MainLayout';
 import { request } from './api';
 import type { ProfileResponse, User } from './types';
-
-/** Login/Signup hand over the user they stored; the token is already in localStorage. */
-export type LoginHandler = (userData: User) => Promise<void>;
-/** Profile reports the fields it changed so the cached user stays in sync. */
-export type ProfileSavedHandler = (patch?: Partial<User> | null) => void;
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -56,7 +51,8 @@ function App() {
     checkUser();
   }, [checkProfileStatus]);
 
-  const handleLogin: LoginHandler = async (userData) => {
+  // Login/Signup hand over the user they stored; the token is already in localStorage.
+  const handleLogin: LoginProps['onLogin'] = async (userData) => {
     setUser(userData);
     localStorage.setItem('remittance_user', JSON.stringify(userData));
     setHasProfile(await checkProfileStatus());
@@ -69,10 +65,11 @@ function App() {
     localStorage.removeItem('authToken');
   };
 
-  const handleProfileSaved: ProfileSavedHandler = (patch) => {
+  // Profile reports the fields it changed so the cached user stays in sync.
+  const handleProfileSaved: NonNullable<ProfileProps['onSaved']> = (patch) => {
     setHasProfile(true);
-    if (patch) {
-      const next = { ...user, ...patch } as User;
+    if (user) {
+      const next: User = { ...user, ...patch };
       setUser(next);
       localStorage.setItem('remittance_user', JSON.stringify(next));
     }
@@ -101,13 +98,13 @@ function App() {
                       <Route path="/overview" element={<Overview user={user} hasProfile={hasProfile} />} />
                       <Route path="/dashboard" element={<Dashboard user={user} hasProfile={hasProfile} />} />
                       <Route path="/beneficiaries" element={<Beneficiaries user={user} />} />
-                      <Route path="/beneficiaries/new" element={<AddBeneficiary user={user} />} />
-                      <Route path="/beneficiaries/:id/account" element={<AddAccount user={user} />} />
+                      <Route path="/beneficiaries/new" element={<AddBeneficiary />} />
+                      <Route path="/beneficiaries/:id/account" element={<AddAccount />} />
                       <Route path="/payment" element={<AddPayment user={user} />} />
                       <Route path="/payment-methods" element={<PaymentMethods user={user} />} />
                       <Route path="/compliance" element={<Compliance user={user} />} />
-                      <Route path="/transaction/review" element={<ReviewTransaction user={user} />} />
-                      <Route path="/transaction/receipt" element={<Receipt user={user} />} />
+                      <Route path="/transaction/review" element={<ReviewTransaction />} />
+                      <Route path="/transaction/receipt" element={<Receipt />} />
                       <Route path="/transactions" element={<Transactions user={user} />} />
                       <Route path="*" element={<Navigate to={home} replace />} />
                     </Routes>

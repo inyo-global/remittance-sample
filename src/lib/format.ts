@@ -1,4 +1,4 @@
-import type { ApiError, FieldError, LocalError, UpstreamError } from '../types';
+import type { FieldError, LocalError, UpstreamError } from '../types';
 
 export const money = (value: unknown, currency = 'USD', opts: Intl.NumberFormatOptions = {}): string => {
     const num = Number(value);
@@ -73,7 +73,7 @@ const isLocal = (e: Loose): e is Loose & LocalError => e.source === 'local';
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 
 /** Extracts a readable message from the error shapes the BFF forwards. */
-export const errorMessage = (err: ApiError | unknown, fallback = 'Something went wrong'): string => {
+export const errorMessage = (err: unknown, fallback = 'Something went wrong'): string => {
     if (!err) return fallback;
     if (typeof err === 'string') return err;
     if (!isObject(err)) return fallback;

@@ -13,11 +13,7 @@ import { request } from '../api';
 import { TransactionContext } from '../context/transaction';
 import { inTransferFlow } from '../lib/steps';
 import { errorMessage } from '../lib/format';
-import type { Beneficiary, BeneficiaryCreateResponse, BeneficiaryData, Destination, DestinationsResponse, JsonSchema, User } from '../types';
-
-export interface AddBeneficiaryProps {
-    user?: User | null;
-}
+import type { Beneficiary, BeneficiaryCreateResponse, BeneficiaryData, Destination, DestinationsResponse, JsonSchema} from '../types';
 
 interface RouteState {
     countryCode?: string;
@@ -29,7 +25,7 @@ const fullName = (data: BeneficiaryData): string => [data.firstName, data.lastNa
  * Creates a recipient Person. The form is generated from
  * GET /payout/recipients/schema/{countryCode}, as the docs require.
  */
-const AddBeneficiary = (_props: AddBeneficiaryProps) => {
+const AddBeneficiary = () => {
     const { state } = useLocation();
     const routeState = (state || null) as RouteState | null;
     const navigate = useNavigate();
