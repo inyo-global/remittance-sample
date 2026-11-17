@@ -1,4 +1,5 @@
 import { createRequire } from "module";
+import { pathToFileURL } from "url";
 const require = createRequire(import.meta.url);
 const express = require("express");
 const Database = require("better-sqlite3");
@@ -50,7 +51,8 @@ app.use((req, res, next) => {
   next();
 });
 
-const db = new Database("remittance.db", { verbose: console.log });
+// DB_PATH lets the test suite point at a throwaway database (":memory:"); SQL logging is off there.
+const db = new Database(process.env.DB_PATH || "remittance.db", { verbose: process.env.NODE_ENV === "test" ? undefined : console.log });
 
 // Initialize Tables
 db.prepare(
@@ -154,6 +156,9 @@ db.prepare(
   matchedCardId TEXT,
   payload TEXT
 )`,
+).run();
+
+db.prepare(
   `CREATE TABLE IF NOT EXISTS kyc_sessions (
   sessionId TEXT PRIMARY KEY,
   userId TEXT,
@@ -380,7 +385,7 @@ const senderOf = (userId) =>
   db.prepare("SELECT externalId FROM profiles WHERE userId = ?").get(userId)?.externalId;
 const kycRow = (row) => (row ? { ...row, data: row.data ? JSON.parse(row.data) : null } : null);
 const saveKyc = (userId, session) => {
-  const existing = db.prepare("SELECT createdAt FROM kyc_sessions WHERE sessionId = ?").get(session.sessionId);
+  const existing = db.prepare("SELECT createdAt, widgetUrl FROM kyc_sessions WHERE sessionId = ?").get(session.sessionId);
   db.prepare(
     "INSERT OR REPLACE INTO kyc_sessions (sessionId, userId, status, widgetUrl, createdAt, data) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(
@@ -1784,9 +1789,16 @@ app.get("/api/debug/mtls", (_req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Listen only when run directly (`node server.js`); the test suite imports the app instead.
+const runDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (runDirectly) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 
-// Keep process alive hack
-setInterval(() => {}, 1 << 30);
+  // Keep process alive hack
+  setInterval(() => {}, 1 << 30);
+}
+
+export { app, db };
+export default app;

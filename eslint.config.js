@@ -34,4 +34,10 @@ export default defineConfig([
     files: ['server.js'],
     languageOptions: { globals: globals.node },
   },
+  {
+    files: ['test/**/*.{js,jsx}', 'src/**/*.test.{js,jsx}', 'vitest.config.js'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+    // Test helpers mix components and plain exports; HMR boundaries do not apply to them.
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
 ])

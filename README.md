@@ -79,6 +79,13 @@ npm install
 npm run dev:full
 ```
 
+### Tests
+```bash
+npm test          # one run
+npm run test:watch
+```
+The suite uses [Vitest](https://vitest.dev) with two projects: the React app under happy-dom + Testing Library (`src/**/*.test.jsx`) and the BFF under Node + supertest (`test/server/`). Calls to Inyo are intercepted in-process, so no credentials, network or `.env` are needed; the BFF tests run against an in-memory SQLite database (`DB_PATH=:memory:`).
+
 ---
 
 ## 3. Step-by-Step Implementation
@@ -541,8 +548,8 @@ Some cards require an extra authentication step (3D Secure, "3DS"). The sample f
 | Mode | `threeDSData` passed to `InyoTokenizer` | How the sample handles the challenge |
 | --- | --- | --- |
 | `off` (default) | `{ enable: false }` | The challenge, if any, comes from `POST /fundingAccounts` (`ActionRequired` + `redirectAcsUrl`) and opens in a modal iframe. |
-| `redirect` | `{ enable: true, successUrl: "<app>/api/3ds/success", failUrl: "<app>/api/3ds/fail" }` | The challenge opens in a new tab, because at the end the issuer navigates that tab to `successUrl` or `failUrl`. The BFF serves a small page there that reports back to the app and closes the tab. |
-| `postmessage` | `{ enable: true, enablePostMessage: true }` | The challenge opens in a modal iframe and the result arrives as a `postMessage` to the page. The page URL must be registered with Inyo beforehand. |
+| `redirect` | `{ enable: true, successUrl: "<app>/api/3ds/success", failUrl: "<app>/api/3ds/fail" }` | The challenge opens in a new tab, because at the end the issuer navigates that tab to `successUrl` or `failUrl` with a form POST (`response` field holding the payment JSON). The BFF serves a small page there that reports back to the app and closes the tab. |
+| `postmessage` | `{ enable: true, enablePostMessage: true }` | The challenge opens in a modal iframe and the result arrives as a `postMessage` to the page (`{ response: { status, approved, paymentId, externalPaymentId, ... } }`), targeted at the page origin registered with Inyo. |
 
 `successUrl`/`failUrl` are built from the page origin (`http://localhost:3000` in development), which must be allowlisted for the public key.
 
