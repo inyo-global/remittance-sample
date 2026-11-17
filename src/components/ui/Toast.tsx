@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, Info, X, XCircle, type LucideIcon } from 'lucide-react';
 import { cx } from '../../lib/cx';
-import { ToastContext, type ToastApi, type ToastItem, type ToastOptions, type ToastTone } from '../../lib/toast';
+import { ToastContext, type ToastApi, type ToastItem, type ToastOptions, type ToastTone } from '../../hooks/useToast';
 
 const TONES: Record<ToastTone, { cls: string; Icon: LucideIcon; icon: string }> = {
     info: { cls: 'border-info-100', Icon: Info, icon: 'text-info-600' },

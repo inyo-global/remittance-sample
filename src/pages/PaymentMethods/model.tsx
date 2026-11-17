@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
-import { useToast } from '../../lib/toast';
+import { useLoad, useToast } from '../../hooks';
 import { challengeUrl as challengeUrlOf } from '../../lib/paymentMethods';
 import type { PaymentMethod, SyncResponse, User } from '../../types';
 
@@ -22,24 +22,13 @@ export const GROUPS: Array<{ type: PaymentMethod['type']; title: string }> = [
 
 export function usePaymentMethods({ user }: PaymentMethodsProps) {
     const toast = useToast();
-    const [methods, setMethods] = useState<PaymentMethod[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const load = useCallback(() => request<PaymentMethod[]>('get', '/payment-methods'), []);
+    const { data: methods, setData: setMethods, loading, error } = useLoad(load, [], [user?.userId, load]);
     const [syncing, setSyncing] = useState<string | null>(null);
     const [removing, setRemoving] = useState<string | null>(null);
     const [challenge, setChallenge] = useState<Challenge | null>(null);
 
-    const load = useCallback(() => request<PaymentMethod[]>('get', '/payment-methods'), []);
-    const reload = useCallback(() => { load().then(setMethods).catch(() => {}); }, [load]);
-
-    useEffect(() => {
-        let cancelled = false;
-        load()
-            .then((res) => !cancelled && setMethods(res))
-            .catch((err: unknown) => !cancelled && setError(errorMessage(err)))
-            .finally(() => !cancelled && setLoading(false));
-        return () => { cancelled = true; };
-    }, [user?.userId, load]);
+    const reload = useCallback(() => { load().then(setMethods).catch(() => {}); }, [load, setMethods]);
 
     // GET /fundingAccounts/{id} through the BFF: Inyo is the source of truth for the status.
     const sync = useCallback(async (method: PaymentMethod) => {
@@ -56,7 +45,7 @@ export function usePaymentMethods({ user }: PaymentMethodsProps) {
         } finally {
             setSyncing(null);
         }
-    }, [load, toast]);
+    }, [load, setMethods, toast]);
 
     // DELETE /fundingAccounts/{id} through the BFF: soft, one-way deactivation on Inyo (isActive=false).
     const remove = useCallback(async (method: PaymentMethod) => {
@@ -72,7 +61,7 @@ export function usePaymentMethods({ user }: PaymentMethodsProps) {
         } finally {
             setRemoving(null);
         }
-    }, [load, toast]);
+    }, [load, setMethods, toast]);
 
     // Result of the ACS page (docs: {paymentId, externalPaymentId, amount, approved}); any result triggers a sync.
     useEffect(() => {

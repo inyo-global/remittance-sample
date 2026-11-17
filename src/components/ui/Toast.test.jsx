@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import { ToastProvider } from './Toast';
-import { useToast } from '../../lib/toast';
+import { useToast } from '../../hooks/useToast';
 
 function Grab({ onReady }) {
   const toast = useToast();

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
-import { useToast } from '../../lib/toast';
+import { useToast } from '../../hooks';
 import type { KycSession, Tone } from '../../types';
 
 // Session states (docs: "KYC Verification Sessions"): PENDING -> VERIFIED | REJECTED | PENDING_REVIEW

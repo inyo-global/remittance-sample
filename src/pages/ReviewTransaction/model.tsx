@@ -1,8 +1,8 @@
-import { useContext, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { request } from '../../api';
-import { TransactionContext } from '../../context/transaction';
-import useQuoteCountdown from '../../lib/useQuoteCountdown';
+import { useTransaction } from '../../hooks';
+import { useQuoteCountdown } from '../../hooks';
 import { errorMessage } from '../../lib/format';
 import type { PayoutMethod, TransactionCreateResponse } from '../../types';
 
@@ -12,7 +12,7 @@ import type { PayoutMethod, TransactionCreateResponse } from '../../types';
  */
 export function useReviewTransaction() {
     const navigate = useNavigate();
-    const { transactionData, setTransactionData } = useContext(TransactionContext)!;
+    const { transactionData, setTransactionData } = useTransaction();
     const { beneficiary, account, paymentMethod, quote } = transactionData;
     const countdown = useQuoteCountdown(quote);
     const [loading, setLoading] = useState(false);

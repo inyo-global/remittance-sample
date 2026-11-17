@@ -1,8 +1,8 @@
-import { useCallback, useContext, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { request } from '../../api';
-import { TransactionContext } from '../../context/transaction';
-import useQuoteCountdown from '../../lib/useQuoteCountdown';
+import { useTransaction } from '../../hooks';
+import { useQuoteCountdown } from '../../hooks';
 import { errorMessage } from '../../lib/format';
 import type { Destination, DestinationsResponse, Quote, QuotesResponse, User } from '../../types';
 
@@ -28,7 +28,7 @@ export const AMOUNT_TYPES: AmountType[] = [
  */
 export function useDashboard({ user, hasProfile }: DashboardProps) {
     const navigate = useNavigate();
-    const { transactionData, setTransactionData } = useContext(TransactionContext)!;
+    const { transactionData, setTransactionData } = useTransaction();
     const quote = transactionData.quote;
     const countdown = useQuoteCountdown(quote);
 

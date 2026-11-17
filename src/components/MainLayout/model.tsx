@@ -1,7 +1,7 @@
-import { useContext, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { showsTransferChrome } from '../../lib/steps';
-import { TransactionContext } from '../../context/transaction';
+import { useTransaction } from '../../hooks';
 import type { User } from '../../types';
 
 export interface MainLayoutProps {
@@ -14,7 +14,7 @@ export function useMainLayout({ children, user, onLogout }: MainLayoutProps) {
     const location = useLocation();
     const [drawerOpen, setDrawerOpen] = useState(false);
     // Always rendered inside <TransactionProvider>, as the JS version assumed.
-    const { transactionData } = useContext(TransactionContext)!;
+    const { transactionData } = useTransaction();
     const inSendFlow = showsTransferChrome(location.pathname, transactionData);
 
     const openDrawer = () => setDrawerOpen(true);

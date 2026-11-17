@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
-import { useToast } from '../../lib/toast';
+import { useToast } from '../../hooks';
 import type { DocumentHistoryEntry, SenderDocument, Tone } from '../../types';
 import type { Outcome } from '../KycPanel/model';
 

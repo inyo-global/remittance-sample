@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useToast } from '../../lib/toast';
+import { useNavigate } from 'react-router-dom';
+import { useRouteState, useToast } from '../../hooks';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
 import { isReversible } from '../../lib/status';
@@ -19,7 +19,7 @@ interface ReceiptLocationState {
  * the `receipt` disclosures must be shown exactly as returned by the API.
  */
 export function useReceipt() {
-    const { state } = useLocation() as { state: ReceiptLocationState | null };
+    const state = useRouteState<ReceiptLocationState>();
     const navigate = useNavigate();
     const toast = useToast();
     const [transaction, setTransaction] = useState<ReceiptTransaction | null>(state?.transaction || null);

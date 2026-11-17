@@ -1,9 +1,7 @@
-import { useContext, useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { request } from '../../api';
-import { TransactionContext } from '../../context/transaction';
+import { useLoad, useRouteState, useTransaction } from '../../hooks';
 import { inTransferFlow } from '../../lib/steps';
-import { errorMessage } from '../../lib/format';
 import type { Beneficiary, User } from '../../types';
 
 export interface BeneficiariesProps {
@@ -19,24 +17,12 @@ export const countryOf = (ben: Beneficiary): string | undefined => ben.data?.add
 
 export function useBeneficiaries({ user }: BeneficiariesProps) {
     const navigate = useNavigate();
-    const location = useLocation();
-    const routeState = (location.state || null) as RouteState | null;
-    const { transactionData, setTransactionData } = useContext(TransactionContext)!;
-    const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const routeState = useRouteState<RouteState>();
+    const { transactionData, setTransactionData } = useTransaction();
+    const { data: beneficiaries, loading, error } = useLoad(() => request<Beneficiary[]>('get', '/beneficiaries'), [], [user?.userId]);
 
     const inFlow = inTransferFlow(transactionData);
     const targetCountry = (routeState?.countryCode || transactionData.countryCode || '').toUpperCase();
-
-    useEffect(() => {
-        let cancelled = false;
-        request<Beneficiary[]>('get', '/beneficiaries')
-            .then((data) => !cancelled && setBeneficiaries(data))
-            .catch((err) => !cancelled && setError(errorMessage(err)))
-            .finally(() => !cancelled && setLoading(false));
-        return () => { cancelled = true; };
-    }, [user?.userId]);
 
     const onSelect = (ben: Beneficiary) => {
         // Outside the send flow this page manages beneficiaries; it must not seed the next transfer.
