@@ -1,8 +1,8 @@
-import { useContext, useEffect, useState, type FormEvent } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { schemaDefaults } from '../../lib/schema';
 import { request } from '../../api';
-import { TransactionContext } from '../../context/transaction';
+import { useRouteState, useTransaction } from '../../hooks';
 import { inTransferFlow } from '../../lib/steps';
 import { errorMessage, maskAccount } from '../../lib/format';
 import type { Bank, BanksResponse, Beneficiary, BeneficiaryAccount, BeneficiaryAccountCreateResponse, BeneficiaryAccountData, JsonSchema, PayoutMethod } from '../../types';
@@ -34,10 +34,9 @@ export const accountSubtitle = (acc: BeneficiaryAccount): string | undefined => 
  */
 export function useAddAccount() {
     const { id } = useParams<{ id: string }>();
-    const { state } = useLocation();
-    const routeState = (state || null) as RouteState | null;
+    const routeState = useRouteState<RouteState>();
     const navigate = useNavigate();
-    const { transactionData, setTransactionData } = useContext(TransactionContext)!;
+    const { transactionData, setTransactionData } = useTransaction();
 
     const beneficiary = routeState?.beneficiary || transactionData.beneficiary;
     const countryCode = (routeState?.countryCode || beneficiary?.data?.address?.countryCode || beneficiary?.data?.documents?.[0]?.countryCode || transactionData.countryCode || '').toUpperCase();

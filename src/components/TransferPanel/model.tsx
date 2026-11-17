@@ -1,6 +1,5 @@
-import { useContext } from 'react';
-import { TransactionContext } from '../../context/transaction';
-import useQuoteCountdown from '../../lib/useQuoteCountdown';
+import { useTransaction } from '../../hooks';
+import { useQuoteCountdown } from '../../hooks';
 
 /** The panel reads everything from the transfer context. */
 export type TransferPanelProps = Record<string, never>;
@@ -11,7 +10,7 @@ export type TransferPanelProps = Record<string, never>;
  */
 export function useTransferPanel(_props: TransferPanelProps) {
     // Only rendered inside the send flow, under <TransactionProvider>.
-    const { transactionData } = useContext(TransactionContext)!;
+    const { transactionData } = useTransaction();
     const { quote, beneficiary, account, paymentMethod } = transactionData;
     const countdown = useQuoteCountdown(quote);
 

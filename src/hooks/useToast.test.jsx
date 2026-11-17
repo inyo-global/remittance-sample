@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, render, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ToastContext, useToast } from './toast';
+import { ToastContext, useToast } from './useToast';
 import { ToastProvider } from '../components/ui/Toast';
 
 describe('useToast', () => {

@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeftRight, BookOpen, CreditCard, History, LayoutDashboard, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react';
 import { request } from '../../api';
-import { errorMessage } from '../../lib/format';
+import { useLoad } from '../../hooks';
 import type { User } from '../../types';
 
 interface NavItem {
@@ -81,16 +80,7 @@ export interface SidebarProps {
 
 export function useSidebar({ user, onLogout, onNavigate }: SidebarProps) {
     const navigate = useNavigate();
-    const [limits, setLimits] = useState<LimitsLike | null>(null);
-    const [limitsError, setLimitsError] = useState<string | null>(null);
-
-    useEffect(() => {
-        let cancelled = false;
-        request<LimitsLike>('get', '/limits')
-            .then((data) => !cancelled && setLimits(data))
-            .catch((err) => !cancelled && setLimitsError(errorMessage(err, 'Limits unavailable')));
-        return () => { cancelled = true; };
-    }, [user?.userId]);
+    const { data: limits, error: limitsError } = useLoad<LimitsLike | null>(() => request<LimitsLike>('get', '/limits'), null, [user?.userId], 'Limits unavailable');
 
     const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || 'User';
     const hasLimits = !!limits && (readWindow(limits.oneDayLimit)?.limit ?? 0) > 0;

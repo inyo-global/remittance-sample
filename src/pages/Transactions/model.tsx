@@ -1,6 +1,6 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useToast } from '../../lib/toast';
+import { useLoad, useToast } from '../../hooks';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
 import type { Transaction, User } from '../../types';
@@ -12,19 +12,8 @@ export interface TransactionsProps {
 export function useTransactions({ user }: TransactionsProps) {
     const navigate = useNavigate();
     const toast = useToast();
-    const [transactions, setTransactions] = useState<Transaction[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const { data: transactions, setData: setTransactions, loading, error } = useLoad(() => request<Transaction[]>('get', '/transactions'), [], [user?.userId]);
     const [syncing, setSyncing] = useState<string | null>(null);
-
-    useEffect(() => {
-        let cancelled = false;
-        request<Transaction[]>('get', '/transactions')
-            .then((data) => !cancelled && setTransactions(data))
-            .catch((err) => !cancelled && setError(errorMessage(err)))
-            .finally(() => !cancelled && setLoading(false));
-        return () => { cancelled = true; };
-    }, [user?.userId]);
 
     // Polls GET /fx/transactions/{id} through the BFF (webhooks are the production path).
     const sync = async (e: MouseEvent<HTMLButtonElement>, txn: Transaction) => {

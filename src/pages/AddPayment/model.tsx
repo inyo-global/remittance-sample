@@ -1,9 +1,8 @@
-import { useCallback, useContext, useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CreditCard, Landmark } from 'lucide-react';
-import { useToast } from '../../lib/toast';
 import { request } from '../../api';
-import { TransactionContext } from '../../context/transaction';
+import { useRouteState, useToast, useTransaction } from '../../hooks';
 import { inTransferFlow } from '../../lib/steps';
 import { errorMessage } from '../../lib/format';
 import type { AchCreateResponse, CardCreateResponse, PaymentMethod, SyncResponse, User } from '../../types';
@@ -78,16 +77,16 @@ export interface AddPaymentProps {
  */
 export function useAddPayment({ user }: AddPaymentProps) {
     const navigate = useNavigate();
-    const location = useLocation() as { state?: { forceAdd?: boolean } | null };
+    const routeState = useRouteState<{ forceAdd?: boolean }>();
     const [searchParams, setSearchParams] = useSearchParams();
     const toast = useToast();
-    const { transactionData, setTransactionData } = useContext(TransactionContext)!;
+    const { transactionData, setTransactionData } = useTransaction();
     const inFlow = inTransferFlow(transactionData);
 
     const [methods, setMethods] = useState<PaymentMethod[]>([]);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
-    const [view, setView] = useState<View>(location.state?.forceAdd ? 'select-type' : 'list');
+    const [view, setView] = useState<View>(routeState?.forceAdd ? 'select-type' : 'list');
     const [error, setError] = useState<string | null>(null);
 
     const [billing, setBilling] = useState<Billing>(EMPTY_BILLING);

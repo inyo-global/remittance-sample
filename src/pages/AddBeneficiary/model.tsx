@@ -1,8 +1,8 @@
-import { useContext, useEffect, useState, type FormEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { schemaDefaults } from '../../lib/schema';
 import { request } from '../../api';
-import { TransactionContext } from '../../context/transaction';
+import { useRouteState, useTransaction } from '../../hooks';
 import { inTransferFlow } from '../../lib/steps';
 import { errorMessage } from '../../lib/format';
 import type { Beneficiary, BeneficiaryCreateResponse, BeneficiaryData, Destination, DestinationsResponse, JsonSchema } from '../../types';
@@ -18,10 +18,9 @@ const fullName = (data: BeneficiaryData): string => [data.firstName, data.lastNa
  * GET /payout/recipients/schema/{countryCode}, as the docs require.
  */
 export function useAddBeneficiary() {
-    const { state } = useLocation();
-    const routeState = (state || null) as RouteState | null;
+    const routeState = useRouteState<RouteState>();
     const navigate = useNavigate();
-    const { transactionData, setTransactionData } = useContext(TransactionContext)!;
+    const { transactionData, setTransactionData } = useTransaction();
 
     const [countryCode, setCountryCode] = useState((routeState?.countryCode || transactionData.countryCode || '').toUpperCase());
     const [destinations, setDestinations] = useState<Destination[]>([]);

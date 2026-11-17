@@ -1,6 +1,5 @@
-import { useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { TransactionContext } from '../../context/transaction';
+import { useTransaction } from '../../hooks';
 import { currentStepIndex } from '../../lib/steps';
 
 /** The stepper reads everything from the route and the transfer context. */
@@ -10,7 +9,7 @@ export function useStepNavigation(_props: StepNavigationProps) {
     const location = useLocation();
     const navigate = useNavigate();
     // Only rendered inside the send flow, under <TransactionProvider>.
-    const { transactionData } = useContext(TransactionContext)!;
+    const { transactionData } = useTransaction();
     const current = currentStepIndex(location.pathname);
 
     // A step is reachable when the data it needs already exists in the flow context.
