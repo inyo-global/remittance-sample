@@ -29,7 +29,7 @@ describe('Transactions', () => {
 
   it('lists transactions with recipient, amounts, summary badge and sub-statuses', async () => {
     request.mockResolvedValue([TX1, TX2]);
-    renderWithProviders(<Transactions user={user} />);
+    renderWithProviders(<Transactions />, { session: { user: user } });
     expect(screen.getByText(/loading transactions/i)).toBeInTheDocument();
     const rows = await screen.findAllByRole('row');
     expect(request).toHaveBeenCalledWith('get', '/transactions');
@@ -51,21 +51,21 @@ describe('Transactions', () => {
 
   it('shows the empty state', async () => {
     request.mockResolvedValue([]);
-    renderWithProviders(<Transactions user={user} />);
+    renderWithProviders(<Transactions />, { session: { user: user } });
     expect(await screen.findByText('No transfers yet')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /start a transfer/i })).toHaveAttribute('href', '/dashboard');
   });
 
   it('shows the API error', async () => {
     request.mockImplementation(() => Promise.reject({ error: 'boom' }));
-    renderWithProviders(<Transactions user={user} />);
+    renderWithProviders(<Transactions />, { session: { user: user } });
     expect(await screen.findByRole('alert')).toHaveTextContent('boom');
   });
 
   it('opens the receipt with the row and fromHistory on click', async () => {
     const u = userEvent.setup();
     request.mockResolvedValue([TX1]);
-    renderWithProviders(<Transactions user={user} />, { route: '/transactions', extraRoutes: <Route path="/transaction/receipt" element={<ReceiptProbe />} /> });
+    renderWithProviders(<Transactions />, { session: { user: user },  route: '/transactions', extraRoutes: <Route path="/transaction/receipt" element={<ReceiptProbe />} /> });
     await u.click(await screen.findByText('Maria Silva'));
     expect(await screen.findByTestId('receipt')).toHaveTextContent('t1:true');
   });
@@ -78,7 +78,7 @@ describe('Transactions', () => {
       if (url === '/transactions/t2/sync') return Promise.resolve(updated);
       return Promise.reject(new Error(`unexpected ${method} ${url}`));
     });
-    renderWithProviders(<Transactions user={user} />, { route: '/transactions', extraRoutes: <Route path="/transaction/receipt" element={<ReceiptProbe />} /> });
+    renderWithProviders(<Transactions />, { session: { user: user },  route: '/transactions', extraRoutes: <Route path="/transaction/receipt" element={<ReceiptProbe />} /> });
     const rows = await screen.findAllByRole('row');
     await u.click(within(rows[2]).getByRole('button', { name: /refresh status/i }));
     expect(await screen.findByText('Status refreshed')).toBeInTheDocument();
@@ -90,7 +90,7 @@ describe('Transactions', () => {
   it('toasts when the refresh fails', async () => {
     const u = userEvent.setup();
     request.mockImplementation((method, url) => (url === '/transactions' ? Promise.resolve([TX1]) : Promise.reject({ error: 'Inyo down' })));
-    renderWithProviders(<Transactions user={user} />);
+    renderWithProviders(<Transactions />, { session: { user: user } });
     await u.click(await screen.findByRole('button', { name: /refresh status/i }));
     expect(await screen.findByText('Could not refresh status')).toBeInTheDocument();
     expect(screen.getByText('Inyo down')).toBeInTheDocument();

@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { request } from '../../api';
-import { useTransaction } from '../../hooks';
-import { useQuoteCountdown } from '../../hooks';
+import { useQuoteCountdown, useSession, useTransaction } from '../../hooks';
 import { errorMessage } from '../../lib/format';
-import type { Destination, DestinationsResponse, Quote, QuotesResponse, User } from '../../types';
-
-export interface DashboardProps {
-    user?: User | null;
-    hasProfile: boolean;
-}
+import type { Destination, DestinationsResponse, Quote, QuotesResponse } from '../../types';
 
 export interface AmountType {
     value: 'NET' | 'GROSS';
@@ -26,7 +20,8 @@ export const AMOUNT_TYPES: AmountType[] = [
  * Step 1 of the send flow: pick a destination and lock an FX rate
  * (POST /payout/quotes). The quote object is kept in context untouched.
  */
-export function useDashboard({ user, hasProfile }: DashboardProps) {
+export function useDashboard() {
+    const { user, hasProfile } = useSession();
     const navigate = useNavigate();
     const { transactionData, setTransactionData } = useTransaction();
     const quote = transactionData.quote;

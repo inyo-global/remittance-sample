@@ -1,8 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeftRight, BookOpen, CreditCard, History, LayoutDashboard, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react';
 import { request } from '../../api';
-import { useLoad } from '../../hooks';
-import type { User } from '../../types';
+import { useLoad, useSession } from '../../hooks';
 
 interface NavItem {
     label: string;
@@ -73,12 +72,11 @@ export const readWindow = (w: LimitWindowLike | null | undefined): Window_ | nul
 };
 
 export interface SidebarProps {
-    user: User | null | undefined;
-    onLogout: () => void;
     onNavigate?: () => void;
 }
 
-export function useSidebar({ user, onLogout, onNavigate }: SidebarProps) {
+export function useSidebar({ onNavigate }: SidebarProps = {}) {
+    const { user, logout: onLogout } = useSession();
     const navigate = useNavigate();
     const { data: limits, error: limitsError } = useLoad<LimitsLike | null>(() => request<LimitsLike>('get', '/limits'), null, [user?.userId], 'Limits unavailable');
 

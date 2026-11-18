@@ -1,9 +1,7 @@
 import View from './view';
-import { useTransactions, type TransactionsProps } from './model';
+import { useTransactions } from './model';
 
-export type { TransactionsProps } from './model';
-
-export default function Transactions(ownProps: TransactionsProps) {
-    const props = useTransactions(ownProps);
+export default function Transactions() {
+    const props = useTransactions();
     return <View {...props} />;
 }

@@ -1,9 +1,7 @@
 import View from './view';
-import { useOverview, type OverviewProps } from './model';
+import { useOverview } from './model';
 
-export type { OverviewProps } from './model';
-
-export default function Overview(ownProps: OverviewProps) {
-    const props = useOverview(ownProps);
+export default function Overview() {
+    const props = useOverview();
     return <View {...props} />;
 }

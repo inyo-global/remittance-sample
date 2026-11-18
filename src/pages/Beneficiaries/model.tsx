@@ -1,12 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { request } from '../../api';
-import { useLoad, useRouteState, useTransaction } from '../../hooks';
+import { useLoad, useRouteState, useTransaction, useSession } from '../../hooks';
 import { inTransferFlow } from '../../lib/steps';
-import type { Beneficiary, User } from '../../types';
-
-export interface BeneficiariesProps {
-    user?: User | null;
-}
+import type { Beneficiary } from '../../types';
 
 interface RouteState {
     countryCode?: string;
@@ -15,7 +11,8 @@ interface RouteState {
 export const displayName = (ben: Beneficiary): string => ben.nickname || [ben.data?.firstName, ben.data?.lastName].filter(Boolean).join(' ') || 'Beneficiary';
 export const countryOf = (ben: Beneficiary): string | undefined => ben.data?.address?.countryCode || ben.data?.documents?.[0]?.countryCode || ben.data?.countryCode;
 
-export function useBeneficiaries({ user }: BeneficiariesProps) {
+export function useBeneficiaries() {
+    const { user } = useSession();
     const navigate = useNavigate();
     const routeState = useRouteState<RouteState>();
     const { transactionData, setTransactionData } = useTransaction();

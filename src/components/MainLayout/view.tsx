@@ -5,17 +5,17 @@ import StepNavigation from '../StepNavigation';
 import logo from '../../assets/inyo-logo.png';
 import type { MainLayoutViewProps } from './model';
 
-export default function MainLayoutView({ children, user, onLogout, drawerOpen, openDrawer, closeDrawer, inSendFlow }: MainLayoutViewProps) {
+export default function MainLayoutView({ children, drawerOpen, openDrawer, closeDrawer, inSendFlow }: MainLayoutViewProps) {
     return (
         <div className="min-h-screen bg-ink-50">
-            <Sidebar user={user} onLogout={onLogout} />
+            <Sidebar />
 
             {/* Mobile drawer */}
             {drawerOpen && (
                 <div className="fixed inset-0 z-40 lg:hidden">
                     <div className="absolute inset-0 bg-ink-950/60" onClick={closeDrawer} />
                     <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] shadow-pop animate-fade-up">
-                        <SidebarContent user={user} onLogout={onLogout} onNavigate={closeDrawer} />
+                        <SidebarContent onNavigate={closeDrawer} />
                     </div>
                 </div>
             )}

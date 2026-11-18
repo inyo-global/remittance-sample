@@ -1,9 +1,7 @@
 import View from './view';
-import { useBeneficiaries, type BeneficiariesProps } from './model';
+import { useBeneficiaries } from './model';
 
-export type { BeneficiariesProps } from './model';
-
-export default function Beneficiaries(ownProps: BeneficiariesProps) {
-    const props = useBeneficiaries(ownProps);
+export default function Beneficiaries() {
+    const props = useBeneficiaries();
     return <View {...props} />;
 }

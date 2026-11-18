@@ -1,9 +1,7 @@
 import View from './view';
-import { usePaymentMethods, type PaymentMethodsProps } from './model';
+import { usePaymentMethods } from './model';
 
-export type { PaymentMethodsProps } from './model';
-
-export default function PaymentMethods(ownProps: PaymentMethodsProps) {
-    const props = usePaymentMethods(ownProps);
+export default function PaymentMethods() {
+    const props = usePaymentMethods();
     return <View {...props} />;
 }

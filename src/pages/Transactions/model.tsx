@@ -1,15 +1,12 @@
 import { useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLoad, useToast } from '../../hooks';
+import { useLoad, useToast, useSession } from '../../hooks';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
-import type { Transaction, User } from '../../types';
+import type { Transaction } from '../../types';
 
-export interface TransactionsProps {
-    user?: User | null;
-}
-
-export function useTransactions({ user }: TransactionsProps) {
+export function useTransactions() {
+    const { user } = useSession();
     const navigate = useNavigate();
     const toast = useToast();
     const { data: transactions, setData: setTransactions, loading, error } = useLoad(() => request<Transaction[]>('get', '/transactions'), [], [user?.userId]);

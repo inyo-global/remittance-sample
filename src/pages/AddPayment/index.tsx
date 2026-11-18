@@ -1,9 +1,7 @@
 import View from './view';
-import { useAddPayment, type AddPaymentProps } from './model';
+import { useAddPayment } from './model';
 
-export type { AddPaymentProps } from './model';
-
-export default function AddPayment(ownProps: AddPaymentProps) {
-    const props = useAddPayment(ownProps);
+export default function AddPayment() {
+    const props = useAddPayment();
     return <View {...props} />;
 }

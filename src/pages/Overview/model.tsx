@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState, type ComponentType, type SVGProps } from 
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeftRight, CreditCard, History, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { request } from '../../api';
+import { useSession } from '../../hooks';
 import { errorMessage } from '../../lib/format';
 import { transactionSummary } from '../../lib/status';
 import { isUsable } from '../../lib/paymentMethods';
-import type { Badge as BadgeInfo, Beneficiary, ComplianceInfo, PaymentMethod, Tone, Transaction, User } from '../../types';
+import type { Badge as BadgeInfo, Beneficiary, ComplianceInfo, PaymentMethod, Tone, Transaction } from '../../types';
 
 export type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -136,12 +137,8 @@ interface OverviewState {
     compliance: ComplianceInfo | null;
 }
 
-export interface OverviewProps {
-    user: User;
-    hasProfile: boolean;
-}
-
-export function useOverview({ user, hasProfile }: OverviewProps) {
+export function useOverview() {
+    const { user, hasProfile } = useSession();
     const [state, setState] = useState<OverviewState>({ loading: true, error: null, transactions: [], beneficiaries: [], paymentMethods: [], compliance: null });
 
     useEffect(() => {

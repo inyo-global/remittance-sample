@@ -27,7 +27,7 @@ describe('Profile', () => {
 
   it('loads the profile and maps user, profile and the extra JSON data into the form', async () => {
     mockApi();
-    renderWithProviders(<Profile user={user} hasProfile onSaved={vi.fn()} />);
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: true, profileSaved: vi.fn() } });
     expect(screen.getByText(/loading profile/i)).toBeInTheDocument();
     expect(await screen.findByLabelText(/first name/i)).toHaveValue('Jane');
     expect(screen.getByLabelText(/^email/i)).toHaveValue('jane@example.com');
@@ -49,7 +49,7 @@ describe('Profile', () => {
 
   it('shows the onboarding copy and the sample SSN placeholder before a profile exists', async () => {
     mockApi({ profile: { user: PROFILE_RES.user, profile: null } });
-    renderWithProviders(<Profile user={user} hasProfile={false} onSaved={vi.fn()} />);
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: false, profileSaved: vi.fn() } });
     expect(await screen.findByRole('heading', { name: /complete your sender profile/i })).toBeInTheDocument();
     expect(screen.getByText('One step before sending money')).toBeInTheDocument();
     expect(screen.getByLabelText(/social security number/i)).toHaveAttribute('placeholder', '078-05-1120');
@@ -60,14 +60,14 @@ describe('Profile', () => {
 
   it('shows the load error', async () => {
     mockApi({ profile: () => Promise.reject({ error: 'User not found' }) });
-    renderWithProviders(<Profile user={user} hasProfile onSaved={vi.fn()} />);
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: true, profileSaved: vi.fn() } });
     expect(await screen.findByRole('alert')).toHaveTextContent('User not found');
   });
 
   it("switches the issuing field when the document is a driver's license", async () => {
     const u = userEvent.setup();
     mockApi();
-    renderWithProviders(<Profile user={user} hasProfile onSaved={vi.fn()} />);
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: true, profileSaved: vi.fn() } });
     await screen.findByLabelText(/first name/i);
     await u.selectOptions(screen.getByLabelText(/identity document/i), 'driver_license');
     expect(screen.getByLabelText(/license number/i)).toBeInTheDocument();
@@ -84,7 +84,7 @@ describe('Profile', () => {
     const u = userEvent.setup();
     const onSaved = vi.fn();
     mockApi();
-    renderWithProviders(<Profile user={user} hasProfile onSaved={onSaved} />, { route: '/profile', extraRoutes: <Route path="/dashboard" element={<LocationProbe />} /> });
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: true, profileSaved: onSaved },  route: '/profile', extraRoutes: <Route path="/dashboard" element={<LocationProbe />} /> });
     await screen.findByLabelText(/first name/i);
     await u.clear(screen.getByLabelText(/occupation/i));
     await u.type(screen.getByLabelText(/occupation/i), 'Designer');
@@ -105,7 +105,7 @@ describe('Profile', () => {
   it('navigates to the dashboard after the first save', async () => {
     const u = userEvent.setup();
     mockApi({ profile: { user: PROFILE_RES.user, profile: null } });
-    renderWithProviders(<Profile user={user} hasProfile={false} onSaved={vi.fn()} />, { route: '/profile', extraRoutes: <Route path="/dashboard" element={<LocationProbe />} /> });
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: false, profileSaved: vi.fn() },  route: '/profile', extraRoutes: <Route path="/dashboard" element={<LocationProbe />} /> });
     await screen.findByLabelText(/first name/i);
     await u.click(screen.getByRole('button', { name: /save and continue/i }));
     expect(await screen.findByTestId('location')).toHaveTextContent('/dashboard');
@@ -114,7 +114,7 @@ describe('Profile', () => {
   it('shows the Inyo error, preferring err.details', async () => {
     const u = userEvent.setup();
     mockApi({ save: () => Promise.reject({ details: { message: 'birthDate: sender must be 18+' } }) });
-    renderWithProviders(<Profile user={user} hasProfile onSaved={vi.fn()} />);
+    renderWithProviders(<Profile />, { session: { user: user, hasProfile: true, profileSaved: vi.fn() } });
     await screen.findByLabelText(/first name/i);
     await u.click(screen.getByRole('button', { name: /save changes/i }));
     expect(await screen.findByText('Could not sync with Inyo')).toBeInTheDocument();

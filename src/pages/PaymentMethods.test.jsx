@@ -58,7 +58,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe('PaymentMethods list', () => {
     it('shows a spinner then the methods grouped by type', async () => {
         mockApi({ methods: [ach, verifiedCard] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         expect(screen.getByText('Loading payment methods…')).toBeInTheDocument();
 
         expect(await screen.findByText('Bank accounts (ACH)')).toBeInTheDocument();
@@ -71,14 +71,14 @@ describe('PaymentMethods list', () => {
 
     it('omits a group with no methods', async () => {
         mockApi({ methods: [verifiedCard] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await screen.findByText('Debit cards');
         expect(screen.queryByText('Bank accounts (ACH)')).not.toBeInTheDocument();
     });
 
     it('renders the empty state with a link to add a method', async () => {
         mockApi({ methods: [] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         expect(await screen.findByText('No payment methods yet')).toBeInTheDocument();
         const links = screen.getAllByRole('link', { name: /Add payment method/ });
         expect(links.length).toBeGreaterThan(0);
@@ -90,13 +90,13 @@ describe('PaymentMethods list', () => {
             if (url === '/webhooks/events') return emptyWebhooks;
             throw { error: { source: 'local', message: 'db is down' } };
         });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         expect(await screen.findByText('db is down')).toBeInTheDocument();
     });
 
     it('offers Resume 3DS only for cards in ActionRequired with a challenge URL', async () => {
         mockApi({ methods: [verifiedCard, pendingCard, pendingNoUrl] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await screen.findByText('Debit cards');
         expect(screen.getAllByRole('button', { name: 'Resume 3DS' })).toHaveLength(1);
         expect(screen.getAllByRole('button', { name: 'Resume in a new tab' })).toHaveLength(1);
@@ -109,7 +109,7 @@ describe('PaymentMethods list', () => {
 describe('3DS challenge', () => {
     it('Resume 3DS opens a modal with the ACS iframe', async () => {
         mockApi({ methods: [pendingCard] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Resume 3DS' }));
         const dialog = screen.getByRole('dialog');
         expect(dialog).toHaveAttribute('aria-label', '3D Secure verification');
@@ -120,7 +120,7 @@ describe('3DS challenge', () => {
         const tab = { closed: false, close: vi.fn() };
         const open = vi.spyOn(window, 'open').mockReturnValue(tab);
         mockApi({ methods: [pendingCard] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Resume in a new tab' }));
         expect(open).toHaveBeenCalledWith(pendingCard.data.apiResponse.redirectAcsUrl, '_blank');
         const dialog = screen.getByRole('dialog');
@@ -135,7 +135,7 @@ describe('3DS challenge', () => {
 
     it('"I completed the challenge" closes the modal and syncs the card', async () => {
         mockApi({ methods: [pendingCard], sync: () => ({ status: 'Verified' }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Resume 3DS' }));
         await userEvent.click(screen.getByRole('button', { name: 'I completed the challenge, check status' }));
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -147,7 +147,7 @@ describe('3DS challenge', () => {
         const tab = { closed: false, close: vi.fn() };
         vi.spyOn(window, 'open').mockReturnValue(tab);
         mockApi({ methods: [pendingCard], sync: () => ({ status: 'Verified' }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Resume in a new tab' }));
 
         postMessage({ source: 'remittance-sample-3ds', outcome: 'success', payload: { response: '{"approved":true}' } }, window.location.origin);
@@ -158,7 +158,7 @@ describe('3DS challenge', () => {
 
     it('accepts a {response:{...}} payload from an Inyo origin, also as a JSON string', async () => {
         mockApi({ methods: [pendingCard], sync: () => ({ status: 'Rejected', data: { statusMessage: 'Issuer said no' } }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Resume 3DS' }));
 
         postMessage(JSON.stringify({ response: { status: 'DECLINED', approved: false, paymentId: 'p1' } }), TRUSTED_ORIGIN);
@@ -169,7 +169,7 @@ describe('3DS challenge', () => {
 
     it('ignores messages from unknown origins, non-JSON strings and payloads without a result', async () => {
         mockApi({ methods: [pendingCard] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Resume 3DS' }));
         const syncCalls = () => request.mock.calls.filter(([, url]) => /\/sync$/.test(url)).length;
 
@@ -187,7 +187,7 @@ describe('3DS challenge', () => {
 describe('Check status', () => {
     it('toasts "Card verified" when Inyo reports Verified', async () => {
         mockApi({ methods: [pendingNoUrl], sync: () => ({ status: 'Verified' }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Check status' }));
         expect(await screen.findByText('Card verified')).toBeInTheDocument();
         expect(request).toHaveBeenCalledWith('get', '/payment-methods/card-nourl/sync');
@@ -197,7 +197,7 @@ describe('Check status', () => {
 
     it('toasts the rejection message, reading the status from data when needed', async () => {
         mockApi({ methods: [pendingNoUrl], sync: () => ({ data: { status: 'rejected', statusMessage: 'Do not honour' } }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Check status' }));
         expect(await screen.findByText('Card rejected')).toBeInTheDocument();
         expect(screen.getByText('Do not honour')).toBeInTheDocument();
@@ -205,14 +205,14 @@ describe('Check status', () => {
 
     it('toasts a warning for any other status', async () => {
         mockApi({ methods: [pendingNoUrl], sync: () => ({ status: 'ActionRequired' }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Check status' }));
         expect(await screen.findByText('Status: ActionRequired')).toBeInTheDocument();
     });
 
     it('toasts the error when the sync fails', async () => {
         mockApi({ methods: [pendingNoUrl], sync: () => { throw { error: { source: 'local', message: 'sync exploded' } }; } });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Check status' }));
         expect(await screen.findByText('Could not refresh status')).toBeInTheDocument();
         expect(screen.getByText('sync exploded')).toBeInTheDocument();
@@ -224,7 +224,7 @@ describe('Remove', () => {
         const confirm = vi.fn(() => false);
         vi.stubGlobal('confirm', confirm);
         mockApi({ methods: [verifiedCard] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
         expect(confirm).toHaveBeenCalledWith(expect.stringContaining('the card ending in 4242'));
         expect(request).not.toHaveBeenCalledWith('delete', expect.anything());
@@ -233,7 +233,7 @@ describe('Remove', () => {
     it('deletes the method, reloads the list and toasts', async () => {
         let list = [ach];
         mockApi({ methods: () => list, remove: () => { list = []; return { success: true }; } });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
         expect(request).toHaveBeenCalledWith('delete', '/payment-methods/ach-1');
         expect(await screen.findByText('Payment method removed')).toBeInTheDocument();
@@ -242,7 +242,7 @@ describe('Remove', () => {
 
     it('toasts when the delete fails', async () => {
         mockApi({ methods: [ach], remove: () => { throw 'still active'; } });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
         expect(await screen.findByText('Could not remove it')).toBeInTheDocument();
         expect(screen.getByText('still active')).toBeInTheDocument();
@@ -252,7 +252,7 @@ describe('Remove', () => {
 describe('WebhookPanel', () => {
     it('shows the public URL plus path and the Basic Auth flag', async () => {
         mockApi({ methods: [], webhooks: { events: [], publicUrl: 'https://tunnel.example.test', path: '/api/webhooks/gateway', basicAuth: true } });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         expect(await screen.findByText(/POST https:\/\/tunnel\.example\.test\/api\/webhooks\/gateway/)).toBeInTheDocument();
         expect(screen.getByText(/Basic Auth required/)).toBeInTheDocument();
         expect(screen.getByText('No events received yet.')).toBeInTheDocument();
@@ -260,7 +260,7 @@ describe('WebhookPanel', () => {
 
     it('falls back to the BFF origin when no tunnel is detected', async () => {
         mockApi({ methods: [] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         const line = await screen.findByText(/no public URL detected/);
         expect(line.textContent).toContain(`${window.location.origin.replace(':3000', ':3001')}/api/webhooks/gateway`);
         expect(line.textContent).toContain('no auth');
@@ -276,7 +276,7 @@ describe('WebhookPanel', () => {
             matchedCardId: i % 2 === 0 ? 'card-1' : null,
         }));
         mockApi({ methods: [], webhooks: { ...emptyWebhooks, events } });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         expect(await screen.findByText('AUTHORIZED')).toBeInTheDocument();
         expect(screen.getAllByText('VOIDED')).toHaveLength(7);
         expect(screen.getByText('CHECK_ACCOUNT_0')).toBeInTheDocument();
@@ -290,7 +290,7 @@ describe('WebhookPanel', () => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         let newest = 1;
         mockApi({ methods: [], webhooks: () => ({ ...emptyWebhooks, events: [{ id: newest, status: 'VOIDED' }] }) });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await screen.findByText('VOIDED');
         const methodCalls = () => request.mock.calls.filter(([m, u]) => m === 'get' && u === '/payment-methods').length;
         const webhookCalls = () => request.mock.calls.filter(([, u]) => u === '/webhooks/events').length;
@@ -311,7 +311,7 @@ describe('WebhookPanel', () => {
 
     it('the Refresh button reloads the events', async () => {
         mockApi({ methods: [] });
-        renderWithProviders(<PaymentMethods user={USER} />);
+        renderWithProviders(<PaymentMethods />, { session: { user: USER } });
         await screen.findByText('No events received yet.');
         await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
         await waitFor(() => expect(request.mock.calls.filter(([, u]) => u === '/webhooks/events').length).toBe(2));

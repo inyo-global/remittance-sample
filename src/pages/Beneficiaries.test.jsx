@@ -22,7 +22,7 @@ describe('Beneficiaries', () => {
 
   it('loads and lists beneficiaries with name, country and document', async () => {
     request.mockResolvedValue([BR, MX]);
-    renderWithProviders(<Beneficiaries user={user} />);
+    renderWithProviders(<Beneficiaries />, { session: { user: user } });
     expect(screen.getByText(/loading beneficiaries/i)).toBeInTheDocument();
     expect(await screen.findByText('Maria Silva')).toBeInTheDocument();
     expect(request).toHaveBeenCalledWith('get', '/beneficiaries');
@@ -39,20 +39,20 @@ describe('Beneficiaries', () => {
 
   it('shows the empty state outside the flow', async () => {
     request.mockResolvedValue([]);
-    renderWithProviders(<Beneficiaries user={user} />);
+    renderWithProviders(<Beneficiaries />, { session: { user: user } });
     expect(await screen.findByText('No beneficiaries yet')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /add beneficiary/i })).toHaveLength(2);
   });
 
   it('shows the API error', async () => {
     request.mockImplementation(() => Promise.reject({ error: { source: 'local', message: 'db down' } }));
-    renderWithProviders(<Beneficiaries user={user} />);
+    renderWithProviders(<Beneficiaries />, { session: { user: user } });
     expect(await screen.findByRole('alert')).toHaveTextContent('db down');
   });
 
   it('in the flow, filters by the quote country and keeps beneficiaries without a country', async () => {
     request.mockResolvedValue([BR, MX, NONE]);
-    renderWithProviders(<Beneficiaries user={user} />, { transaction: { quote: QUOTE, countryCode: 'br' } });
+    renderWithProviders(<Beneficiaries />, { session: { user: user },  transaction: { quote: QUOTE, countryCode: 'br' } });
     expect(await screen.findByText('Maria Silva')).toBeInTheDocument();
     expect(screen.getByText('No country')).toBeInTheDocument();
     expect(screen.queryByText('Juan Perez')).not.toBeInTheDocument();
@@ -63,7 +63,7 @@ describe('Beneficiaries', () => {
 
   it('uses location.state.countryCode over the context country and shows the country empty state', async () => {
     request.mockResolvedValue([BR]);
-    renderWithProviders(<Beneficiaries user={user} />, { route: '/beneficiaries', state: { countryCode: 'MX' }, transaction: { quote: QUOTE, countryCode: 'BR' } });
+    renderWithProviders(<Beneficiaries />, { session: { user: user },  route: '/beneficiaries', state: { countryCode: 'MX' }, transaction: { quote: QUOTE, countryCode: 'BR' } });
     expect(await screen.findByText('No beneficiaries in MX yet')).toBeInTheDocument();
   });
 
@@ -71,7 +71,7 @@ describe('Beneficiaries', () => {
     const u = userEvent.setup();
     const setTransactionData = vi.fn();
     request.mockResolvedValue([BR]);
-    renderWithProviders(<Beneficiaries user={user} />, { route: '/beneficiaries', transaction: { quote: QUOTE, countryCode: 'BR', account: { id: 'old' } }, setTransactionData, extraRoutes: probe });
+    renderWithProviders(<Beneficiaries />, { session: { user: user },  route: '/beneficiaries', transaction: { quote: QUOTE, countryCode: 'BR', account: { id: 'old' } }, setTransactionData, extraRoutes: probe });
     await u.click(await screen.findByRole('button', { name: /maria silva/i }));
     expect(setTransactionData).toHaveBeenCalledTimes(1);
     const next = setTransactionData.mock.calls[0][0]({ quote: QUOTE, account: { id: 'old' } });
@@ -83,7 +83,7 @@ describe('Beneficiaries', () => {
     const u = userEvent.setup();
     const setTransactionData = vi.fn();
     request.mockResolvedValue([MX]);
-    renderWithProviders(<Beneficiaries user={user} />, { route: '/beneficiaries', setTransactionData, extraRoutes: probe });
+    renderWithProviders(<Beneficiaries />, { session: { user: user },  route: '/beneficiaries', setTransactionData, extraRoutes: probe });
     await u.click(await screen.findByRole('button', { name: /juan perez/i }));
     expect(setTransactionData).not.toHaveBeenCalled();
     expect(await screen.findByTestId('location')).toHaveTextContent('/beneficiaries/b2/account');
@@ -92,7 +92,7 @@ describe('Beneficiaries', () => {
   it('"Add beneficiary" goes to the new-beneficiary form', async () => {
     const u = userEvent.setup();
     request.mockResolvedValue([BR]);
-    renderWithProviders(<Beneficiaries user={user} />, { route: '/beneficiaries', extraRoutes: <Route path="/beneficiaries/new" element={<LocationProbe />} /> });
+    renderWithProviders(<Beneficiaries />, { session: { user: user },  route: '/beneficiaries', extraRoutes: <Route path="/beneficiaries/new" element={<LocationProbe />} /> });
     await screen.findByText('Maria Silva');
     await u.click(screen.getByRole('button', { name: /add beneficiary/i }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/beneficiaries/new'));
