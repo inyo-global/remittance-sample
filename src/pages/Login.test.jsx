@@ -20,7 +20,7 @@ describe('Login', () => {
     const user = userEvent.setup();
     const onLogin = vi.fn().mockResolvedValue();
     request.mockResolvedValue({ user: { id: 'u1', email: 'jane@example.com' }, token: 'jwt-1' });
-    renderWithProviders(<Login onLogin={onLogin} />);
+    renderWithProviders(<Login />, { session: { login: onLogin } });
     await fill(user);
     await user.click(screen.getByRole('button', { name: /log in/i }));
 
@@ -33,7 +33,7 @@ describe('Login', () => {
     const user = userEvent.setup();
     const onLogin = vi.fn();
     request.mockResolvedValue({ user: { id: 'u2', userId: 'keep-me' } });
-    renderWithProviders(<Login onLogin={onLogin} />);
+    renderWithProviders(<Login />, { session: { login: onLogin } });
     await fill(user);
     await user.click(screen.getByRole('button', { name: /log in/i }));
     await waitFor(() => expect(onLogin).toHaveBeenCalledWith({ id: 'u2', userId: 'keep-me' }));
@@ -44,7 +44,7 @@ describe('Login', () => {
     const user = userEvent.setup();
     const onLogin = vi.fn();
     request.mockImplementation(() => Promise.reject({ error: 'Invalid password' }));
-    renderWithProviders(<Login onLogin={onLogin} />);
+    renderWithProviders(<Login />, { session: { login: onLogin } });
     await fill(user);
     await user.click(screen.getByRole('button', { name: /log in/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid password');
@@ -56,7 +56,7 @@ describe('Login', () => {
     const user = userEvent.setup();
     let resolve;
     request.mockReturnValue(new Promise((r) => { resolve = r; }));
-    renderWithProviders(<Login onLogin={vi.fn()} />);
+    renderWithProviders(<Login />, { session: { login: vi.fn() } });
     await fill(user);
     await user.click(screen.getByRole('button', { name: /log in/i }));
     const button = screen.getByRole('button', { name: /log in/i });
@@ -67,7 +67,7 @@ describe('Login', () => {
   });
 
   it('links to the signup page', () => {
-    renderWithProviders(<Login onLogin={vi.fn()} />);
+    renderWithProviders(<Login />, { session: { login: vi.fn() } });
     expect(screen.getByRole('link', { name: /create one/i })).toHaveAttribute('href', '/signup');
   });
 });

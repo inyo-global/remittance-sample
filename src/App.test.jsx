@@ -7,25 +7,45 @@ import { request } from './api';
 
 vi.mock('./api', () => ({ request: vi.fn() }));
 
-// Pages are covered by their own tests; here they are stubs that expose their props.
+// Pages are covered by their own tests; here they are stubs that expose what they read from the session.
 const { stub } = vi.hoisted(() => ({
-  stub: (name) => ({ default: (props) => <div data-testid={`page-${name}`}>{name} hasProfile={String(props.hasProfile)} user={props.user?.email}</div> }),
+  stub: (name) => async () => {
+    const { useSession } = await import('./hooks');
+    const Page = () => { const s = useSession(); return <div data-testid={`page-${name}`}>{name} hasProfile={String(s.hasProfile)} user={s.user?.email}</div>; };
+    return { default: Page };
+  },
 }));
-vi.mock('./pages/Signup', () => ({ default: ({ onLogin }) => <button onClick={() => onLogin({ id: 'u2', email: 'new@example.com' })}>Signup</button> }));
-vi.mock('./pages/Login', () => ({ default: ({ onLogin }) => <button onClick={() => onLogin({ id: 'u1', email: 'jane@example.com' })}>Login</button> }));
-vi.mock('./pages/Profile', () => ({ default: ({ onSaved, hasProfile, user }) => <div data-testid="page-Profile">Profile hasProfile={String(hasProfile)} user={user?.email} <button onClick={() => onSaved({ firstName: 'Patched' })}>save</button></div> }));
-vi.mock('./pages/Overview', () => stub('Overview'));
-vi.mock('./pages/Dashboard', () => stub('Dashboard'));
-vi.mock('./pages/Beneficiaries', () => stub('Beneficiaries'));
-vi.mock('./pages/AddBeneficiary', () => stub('AddBeneficiary'));
-vi.mock('./pages/AddAccount', () => stub('AddAccount'));
-vi.mock('./pages/AddPayment', () => stub('AddPayment'));
-vi.mock('./pages/PaymentMethods', () => stub('PaymentMethods'));
-vi.mock('./pages/ReviewTransaction', () => stub('ReviewTransaction'));
-vi.mock('./pages/Receipt', () => stub('Receipt'));
-vi.mock('./pages/Compliance', () => stub('Compliance'));
-vi.mock('./pages/Transactions', () => stub('Transactions'));
-vi.mock('./components/MainLayout', () => ({ default: ({ children, user, onLogout }) => <div data-testid="layout">layout:{user.email}<button onClick={onLogout}>logout</button>{children}</div> }));
+vi.mock('./pages/Signup', async () => {
+  const { useSession } = await import('./hooks');
+  const Signup = () => { const { login } = useSession(); return <button onClick={() => login({ id: 'u2', email: 'new@example.com' })}>Signup</button>; };
+  return { default: Signup };
+});
+vi.mock('./pages/Login', async () => {
+  const { useSession } = await import('./hooks');
+  const Login = () => { const { login } = useSession(); return <button onClick={() => login({ id: 'u1', email: 'jane@example.com' })}>Login</button>; };
+  return { default: Login };
+});
+vi.mock('./pages/Profile', async () => {
+  const { useSession } = await import('./hooks');
+  const Profile = () => { const { profileSaved, hasProfile, user } = useSession(); return <div data-testid="page-Profile">Profile hasProfile={String(hasProfile)} user={user?.email} <button onClick={() => profileSaved({ firstName: 'Patched' })}>save</button></div>; };
+  return { default: Profile };
+});
+vi.mock('./pages/Overview', stub('Overview'));
+vi.mock('./pages/Dashboard', stub('Dashboard'));
+vi.mock('./pages/Beneficiaries', stub('Beneficiaries'));
+vi.mock('./pages/AddBeneficiary', stub('AddBeneficiary'));
+vi.mock('./pages/AddAccount', stub('AddAccount'));
+vi.mock('./pages/AddPayment', stub('AddPayment'));
+vi.mock('./pages/PaymentMethods', stub('PaymentMethods'));
+vi.mock('./pages/ReviewTransaction', stub('ReviewTransaction'));
+vi.mock('./pages/Receipt', stub('Receipt'));
+vi.mock('./pages/Compliance', stub('Compliance'));
+vi.mock('./pages/Transactions', stub('Transactions'));
+vi.mock('./components/MainLayout', async () => {
+  const { useSession } = await import('./hooks');
+  const Layout = ({ children }) => { const { user, logout } = useSession(); return <div data-testid="layout">layout:{user.email}<button onClick={logout}>logout</button>{children}</div>; };
+  return { default: Layout };
+});
 
 const go = (path) => window.history.pushState({}, '', path);
 const SAVED = { id: 'u1', userId: 'u1', email: 'jane@example.com' };
@@ -101,7 +121,7 @@ describe('App', () => {
     request.mockResolvedValue({ profile: { externalId: 'sender-1' } });
     render(<App />);
     await u.click(await screen.findByRole('button', { name: 'Login' }));
-    // setUser renders before the profile check resolves, so the redirect from /login is computed
+    // login() publishes the user before the profile check resolves, so the redirect from /login is computed
     // with hasProfile=false and lands on /profile even for a fully onboarded sender.
     const profilePage = await screen.findByTestId('page-Profile');
     await waitFor(() => expect(profilePage).toHaveTextContent('hasProfile=true'));

@@ -47,7 +47,7 @@ const baseHandlers = {
 };
 
 const renderCompliance = (route = '/compliance') =>
-    renderWithProviders(<Compliance user={USER} />, { route, path: '/compliance', extraRoutes: <Route path="*" element={<LocationProbe />} /> });
+    renderWithProviders(<Compliance />, { session: { user: USER },  route, path: '/compliance', extraRoutes: <Route path="*" element={<LocationProbe />} /> });
 
 beforeEach(() => {
     request.mockReset();

@@ -37,8 +37,9 @@ function mockApi({ transactions = [], beneficiaries = [], paymentMethods = [], c
     });
 }
 
-const renderOverview = (props = {}) =>
-    renderWithProviders(<Overview user={USER} hasProfile {...props} />, {
+const renderOverview = ({ hasProfile = true } = {}) =>
+    renderWithProviders(<Overview />, {
+        session: { user: USER, hasProfile },
         route: '/overview',
         path: '/overview',
         extraRoutes: <Route path="*" element={<LocationProbe />} />,

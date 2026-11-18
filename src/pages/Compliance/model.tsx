@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { request } from '../../api';
+import { useSession } from '../../hooks';
 import { errorMessage } from '../../lib/format';
-import type { ComplianceInfo, LimitKey, Limits, Money, User } from '../../types';
+import type { ComplianceInfo, LimitKey, Limits, Money } from '../../types';
 
 export const WINDOWS: Array<{ key: LimitKey; label: string }> = [
     { key: 'oneDayLimit', label: '24 hours' },
@@ -18,11 +19,8 @@ export const num = (v: number | Money | null | undefined) => Number((v && typeof
  * Trust level + rolling limits, from GET /participants/{id}/complianceLevels
  * and GET /fx/participants/{id}/limits.
  */
-export interface ComplianceProps {
-    user: User;
-}
-
-export function useCompliance({ user }: ComplianceProps) {
+export function useCompliance() {
+    const { user } = useSession();
     const [data, setData] = useState<ComplianceInfo | null>(null);
     const [usage, setUsage] = useState<Limits | null>(null);
     const [loading, setLoading] = useState(true);

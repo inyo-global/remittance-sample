@@ -1,9 +1,7 @@
 import View from './view';
-import { useProfile, type ProfileProps } from './model';
+import { useProfile } from './model';
 
-export type { ProfileProps } from './model';
-
-export default function Profile(ownProps: ProfileProps) {
-    const props = useProfile(ownProps);
+export default function Profile() {
+    const props = useProfile();
     return <View {...props} />;
 }

@@ -21,7 +21,7 @@ describe('SidebarContent', () => {
 
   it('renders navigation, the user and the loading state for limits', () => {
     request.mockReturnValue(new Promise(() => {}));
-    renderWithProviders(<SidebarContent user={user} onLogout={() => {}} />);
+    renderWithProviders(<SidebarContent />, { session: { user: user, logout: () => {} } });
     expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/overview');
     expect(screen.getByRole('link', { name: 'Inyo API docs Opens in a new tab' })).toHaveAttribute('target', '_blank');
     expect(screen.getByText('Jane Doe')).toBeInTheDocument();
@@ -34,7 +34,7 @@ describe('SidebarContent', () => {
 
   it('renders limit bars with usage percentages and tones', async () => {
     request.mockResolvedValue(limits);
-    const { container } = renderWithProviders(<SidebarContent user={user} onLogout={() => {}} />);
+    const { container } = renderWithProviders(<SidebarContent />, { session: { user: user, logout: () => {} } });
     await screen.findByText('24 hours');
     expect(screen.getByText('$250')).toBeInTheDocument();
     expect(screen.getByText('/ $1,000')).toBeInTheDocument();
@@ -49,24 +49,24 @@ describe('SidebarContent', () => {
 
   it('invites the user to complete the profile when limits are zero', async () => {
     request.mockResolvedValue({ oneDayLimit: { limit: 0, used: 0 } });
-    renderWithProviders(<SidebarContent user={user} onLogout={() => {}} />);
+    renderWithProviders(<SidebarContent />, { session: { user: user, logout: () => {} } });
     expect(await screen.findByText('Complete your profile to unlock sending limits.')).toBeInTheDocument();
   });
 
   it('shows a truncated error when limits fail', async () => {
     const long = 'x'.repeat(200);
     request.mockRejectedValue({ error: { source: 'local', message: long } });
-    renderWithProviders(<SidebarContent user={user} onLogout={() => {}} />);
+    renderWithProviders(<SidebarContent />, { session: { user: user, logout: () => {} } });
     const el = await screen.findByTitle(long);
     expect(el).toHaveTextContent(`${'x'.repeat(140)}…`);
   });
 
   it('falls back to the email, then "User", when names are missing', () => {
     request.mockReturnValue(new Promise(() => {}));
-    const { unmount } = renderWithProviders(<SidebarContent user={{ email: 'a@b.c' }} onLogout={() => {}} />);
+    const { unmount } = renderWithProviders(<SidebarContent />, { session: { user: { email: 'a@b.c' }, logout: () => {} } });
     expect(screen.getAllByText('a@b.c')).toHaveLength(2);
     unmount();
-    renderWithProviders(<SidebarContent user={{}} onLogout={() => {}} />);
+    renderWithProviders(<SidebarContent />, { session: { user: {}, logout: () => {} } });
     expect(screen.getByText('User')).toBeInTheDocument();
     expect(screen.getByText('U')).toBeInTheDocument();
   });
@@ -76,7 +76,7 @@ describe('SidebarContent', () => {
     request.mockResolvedValue(limits);
     const onLogout = vi.fn();
     const onNavigate = vi.fn();
-    renderWithProviders(<SidebarContent user={user} onLogout={onLogout} onNavigate={onNavigate} />, {
+    renderWithProviders(<SidebarContent onNavigate={onNavigate} />, { session: { user: user, logout: onLogout }, 
       route: '/', path: '/', extraRoutes: <Route path="*" element={<LocationProbe />} />,
     });
     await u.click(screen.getByRole('button', { name: 'Log out' }));
@@ -92,7 +92,7 @@ describe('SidebarContent', () => {
     const u = userEvent.setup();
     request.mockResolvedValue(limits);
     const onNavigate = vi.fn();
-    renderWithProviders(<SidebarContent user={user} onLogout={() => {}} onNavigate={onNavigate} />, {
+    renderWithProviders(<SidebarContent onNavigate={onNavigate} />, { session: { user: user, logout: () => {} }, 
       route: '/', path: '/', extraRoutes: <Route path="*" element={<LocationProbe />} />,
     });
     await u.click(screen.getByRole('link', { name: 'Transactions' }));
@@ -104,7 +104,7 @@ describe('SidebarContent', () => {
     let resolve;
     request.mockReturnValue(new Promise((r) => { resolve = r; }));
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { unmount } = renderWithProviders(<SidebarContent user={user} onLogout={() => {}} />);
+    const { unmount } = renderWithProviders(<SidebarContent />, { session: { user: user, logout: () => {} } });
     unmount();
     resolve(limits);
     await Promise.resolve();
@@ -115,7 +115,7 @@ describe('SidebarContent', () => {
 describe('Sidebar', () => {
   it('wraps the content in a fixed aside', () => {
     request.mockReturnValue(new Promise(() => {}));
-    const { container } = renderWithProviders(<Sidebar user={user} onLogout={() => {}} />);
+    const { container } = renderWithProviders(<Sidebar />, { session: { user: user, logout: () => {} } });
     const aside = container.querySelector('aside');
     expect(aside.className).toContain('fixed');
     expect(aside).toHaveTextContent('Jane Doe');

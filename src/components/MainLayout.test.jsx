@@ -11,10 +11,10 @@ vi.mock('../api', () => ({ request: vi.fn() }));
 const user = { userId: 'u1', firstName: 'Jane', lastName: 'Doe', email: 'jane@example.com' };
 const layout = (route, transaction = {}) =>
   renderWithProviders(
-    <MainLayout user={user} onLogout={() => {}}>
+    <MainLayout>
       <p>page content</p>
     </MainLayout>,
-    { route, path: '*', transaction },
+    { route, path: '*', session: { user }, transaction },
   );
 
 describe('MainLayout', () => {

@@ -55,10 +55,10 @@ function mockApi({ methods = [], card, sync, linkToken, achCreate } = {}) {
 const renderPage = ({ route = '/payment', state, transaction, setTransactionData } = {}) =>
     renderWithProviders(
         <>
-            <AddPayment user={USER} />
+            <AddPayment />
             <LocationProbe />
         </>,
-        { route, path: '/payment', state, transaction, setTransactionData, extraRoutes: <Route path="*" element={<LocationProbe />} /> },
+        { route, path: '/payment', state, session: { user: USER }, transaction, setTransactionData, extraRoutes: <Route path="*" element={<LocationProbe />} /> },
     );
 
 /** Goes to the add-card view, fills the billing address from the profile and waits for the tokenizer. */

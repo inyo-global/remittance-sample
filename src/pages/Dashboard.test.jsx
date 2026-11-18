@@ -50,7 +50,7 @@ describe('Dashboard', () => {
 
   it('loads destinations, selects the first country and defaults to 100 USD NET', async () => {
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile />);
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true } });
     expect(screen.getByText('Hi Jane')).toBeInTheDocument();
     const select = screen.getByLabelText(/destination country/i);
     expect(select).toBeDisabled();
@@ -65,13 +65,13 @@ describe('Dashboard', () => {
 
   it('keeps the context country when it exists in the list and accepts a plain array', async () => {
     mockApi({ destinations: DESTINATIONS });
-    renderWithProviders(<Dashboard user={user} hasProfile />, { transaction: { countryCode: 'MX' } });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  transaction: { countryCode: 'MX' } });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('MX'));
   });
 
   it('warns when the profile is incomplete', async () => {
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile={false} />);
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: false } });
     expect(screen.getByText('Your sender profile is incomplete')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /complete profile/i })).toHaveAttribute('href', '/profile');
   });
@@ -80,7 +80,7 @@ describe('Dashboard', () => {
     const u = userEvent.setup();
     let fail = true;
     mockApi({ destinations: () => (fail ? Promise.reject({ error: 'Inyo 503' }) : Promise.resolve(DESTINATIONS)) });
-    renderWithProviders(<Dashboard user={user} hasProfile />);
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true } });
     expect(await screen.findByText('Destinations unavailable')).toBeInTheDocument();
     expect(screen.getByText('Inyo 503')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /get quote/i })).toBeDisabled();
@@ -94,7 +94,7 @@ describe('Dashboard', () => {
     const u = userEvent.setup();
     const setTransactionData = vi.fn();
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile />, { setTransactionData });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  setTransactionData });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('BR'));
     await u.click(screen.getByRole('radio', { name: /gross/i }));
     await u.clear(screen.getByLabelText(/you send/i));
@@ -109,7 +109,7 @@ describe('Dashboard', () => {
     const u = userEvent.setup();
     const setTransactionData = vi.fn();
     mockApi({ quote: { quotes: [{ ...QUOTE, id: 'from-list' }] } });
-    renderWithProviders(<Dashboard user={user} hasProfile />, { setTransactionData });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  setTransactionData });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('BR'));
     await u.click(screen.getByRole('button', { name: /get quote/i }));
     await waitFor(() => expect(setTransactionData).toHaveBeenCalled());
@@ -129,7 +129,7 @@ describe('Dashboard', () => {
   it('renders the locked quote from context and continues to the next missing step', async () => {
     const u = userEvent.setup();
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile />, { route: '/dashboard', transaction: { quote: QUOTE, countryCode: 'BR' }, extraRoutes: probes });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  route: '/dashboard', transaction: { quote: QUOTE, countryCode: 'BR' }, extraRoutes: probes });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('BR'));
     expect(screen.getByLabelText(/you send/i)).toHaveValue(100);
     expect(screen.getByText('512.34 BRL')).toBeInTheDocument();
@@ -150,7 +150,7 @@ describe('Dashboard', () => {
   ])('resumes at the first step without data (%o)', async (filled, target) => {
     const u = userEvent.setup();
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile />, { route: '/dashboard', transaction: { quote: QUOTE, countryCode: 'BR', ...filled }, extraRoutes: probes });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  route: '/dashboard', transaction: { quote: QUOTE, countryCode: 'BR', ...filled }, extraRoutes: probes });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('BR'));
     await u.click(screen.getByRole('button', { name: /^continue$/i }));
     expect(await screen.findByTestId('location')).toHaveTextContent(target);
@@ -159,7 +159,7 @@ describe('Dashboard', () => {
   it('blocks Continue once the quote expired', async () => {
     vi.setSystemTime(new Date('2026-11-16T12:30:00Z'));
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile />, { transaction: { quote: QUOTE, countryCode: 'BR' } });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  transaction: { quote: QUOTE, countryCode: 'BR' } });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('BR'));
     expect(screen.getByText('Quote expired')).toBeInTheDocument();
     expect(screen.getByText('This quote expired. Refresh it to continue.')).toBeInTheDocument();
@@ -170,7 +170,7 @@ describe('Dashboard', () => {
     const u = userEvent.setup();
     const setTransactionData = vi.fn();
     mockApi();
-    renderWithProviders(<Dashboard user={user} hasProfile />, { transaction: { quote: QUOTE, countryCode: 'BR' }, setTransactionData });
+    renderWithProviders(<Dashboard />, { session: { user: user, hasProfile: true },  transaction: { quote: QUOTE, countryCode: 'BR' }, setTransactionData });
     await waitFor(() => expect(screen.getByLabelText(/destination country/i)).toHaveValue('BR'));
     const prev = { quote: QUOTE, countryCode: 'BR', beneficiary: { id: 'b1' }, account: { id: 'a1' }, paymentMethod: { id: 'pm1' } };
 

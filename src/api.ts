@@ -1,4 +1,5 @@
 import axios, { AxiosError, type AxiosRequestConfig, type Method } from 'axios';
+import { sessionStorage } from './lib/sessionStorage';
 
 // All calls go to the local BFF (server/), which holds the Inyo credentials.
 // Vite proxies /api -> http://localhost:3001 in development.
@@ -12,7 +13,7 @@ export type RequestOptions = Omit<AxiosRequestConfig, 'method' | 'url' | 'data'>
  */
 export const request = async <T = unknown>(method: Method, url: string, data: unknown = null, options: RequestOptions = {}): Promise<T> => {
     try {
-        const token = localStorage.getItem('authToken');
+        const token = sessionStorage.token();
         const config: AxiosRequestConfig = { method, url, data, ...options, headers: { ...(options.headers || {}) } };
         if (token) config.headers!['Authorization'] = `Bearer ${token}`;
         const response = await api<T>(config);
@@ -20,11 +21,10 @@ export const request = async <T = unknown>(method: Method, url: string, data: un
     } catch (error) {
         const axiosError = error as AxiosError<unknown>;
         // Session expired or token rejected: drop the local session and send the user to login.
-        if (axiosError.response && (axiosError.response.status === 401 || axiosError.response.status === 403) && localStorage.getItem('authToken')) {
+        if (axiosError.response && (axiosError.response.status === 401 || axiosError.response.status === 403) && sessionStorage.token()) {
             const isAuthRoute = /\/(login|register)$/.test(url);
             if (!isAuthRoute && !url.startsWith('/beneficiaries/') && !url.startsWith('/transactions')) {
-                localStorage.removeItem('authToken');
-                localStorage.removeItem('remittance_user');
+                sessionStorage.clear();
                 window.location.assign('/login');
             }
         }

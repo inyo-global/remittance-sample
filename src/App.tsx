@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { SessionProvider } from './context/SessionProvider';
 import { TransactionProvider } from './context/TransactionContext';
 import { ToastProvider } from './components/ui/Toast';
 import Spinner from './components/ui/Spinner';
+import MainLayout from './components/MainLayout';
+import { RedirectIfAuthed, RequireAuth } from './routes/guards';
+import { useSession } from './hooks';
+import Login from './pages/Login';
 import Signup from './pages/Signup';
-import Profile, { type ProfileProps } from './pages/Profile';
+import Profile from './pages/Profile';
 import Dashboard from './pages/Dashboard';
 import Overview from './pages/Overview';
 import Beneficiaries from './pages/Beneficiaries';
@@ -16,109 +20,55 @@ import ReviewTransaction from './pages/ReviewTransaction';
 import Receipt from './pages/Receipt';
 import Compliance from './pages/Compliance';
 import Transactions from './pages/Transactions';
-import Login, { type LoginProps } from './pages/Login';
-import MainLayout from './components/MainLayout';
-import { request } from './api';
-import type { ProfileResponse, User } from './types';
 
-function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [hasProfile, setHasProfile] = useState(false);
-  const [loading, setLoading] = useState(true);
+function AppRoutes() {
+    const { user, loading, home } = useSession();
 
-  // A "profile" exists once the sender was created in Inyo (profiles.externalId).
-  const checkProfileStatus = useCallback(async () => {
-    try {
-      const res = await request<ProfileResponse>('get', '/profile');
-      return !!res.profile?.externalId;
-    } catch (e) {
-      console.error('Profile check failed', e);
-      return false;
-    }
-  }, []);
+    if (loading) return <Spinner label="Starting…" className="min-h-screen" />;
 
-  useEffect(() => {
-    const checkUser = async () => {
-      const saved = localStorage.getItem('remittance_user');
-      if (saved && localStorage.getItem('authToken')) {
-        // The cached copy is what this app wrote at login; trusted as a User.
-        const u = JSON.parse(saved) as User;
-        setUser(u);
-        setHasProfile(await checkProfileStatus());
-      }
-      setLoading(false);
-    };
-    checkUser();
-  }, [checkProfileStatus]);
-
-  // Login/Signup hand over the user they stored; the token is already in localStorage.
-  const handleLogin: LoginProps['onLogin'] = async (userData) => {
-    setUser(userData);
-    localStorage.setItem('remittance_user', JSON.stringify(userData));
-    setHasProfile(await checkProfileStatus());
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    setHasProfile(false);
-    localStorage.removeItem('remittance_user');
-    localStorage.removeItem('authToken');
-  };
-
-  // Profile reports the fields it changed so the cached user stays in sync.
-  const handleProfileSaved: NonNullable<ProfileProps['onSaved']> = (patch) => {
-    setHasProfile(true);
-    if (user) {
-      const next: User = { ...user, ...patch };
-      setUser(next);
-      localStorage.setItem('remittance_user', JSON.stringify(next));
-    }
-  };
-
-  if (loading) return <Spinner label="Starting…" className="min-h-screen" />;
-
-  const home = hasProfile ? '/overview' : '/profile';
-
-  return (
-    <Router>
-      <ToastProvider>
-        <TransactionProvider>
-          <Routes>
+    return (
+        <Routes>
             <Route path="/" element={<Navigate to={user ? home : '/login'} replace />} />
-            <Route path="/login" element={!user ? <Login onLogin={handleLogin} /> : <Navigate to={home} replace />} />
-            <Route path="/signup" element={!user ? <Signup onLogin={handleLogin} /> : <Navigate to={home} replace />} />
-
+            <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
+            <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
             <Route
-              path="*"
-              element={
-                user ? (
-                  <MainLayout user={user} onLogout={handleLogout}>
-                    <Routes>
-                      <Route path="/profile" element={<Profile user={user} hasProfile={hasProfile} onSaved={handleProfileSaved} />} />
-                      <Route path="/overview" element={<Overview user={user} hasProfile={hasProfile} />} />
-                      <Route path="/dashboard" element={<Dashboard user={user} hasProfile={hasProfile} />} />
-                      <Route path="/beneficiaries" element={<Beneficiaries user={user} />} />
-                      <Route path="/beneficiaries/new" element={<AddBeneficiary />} />
-                      <Route path="/beneficiaries/:id/account" element={<AddAccount />} />
-                      <Route path="/payment" element={<AddPayment user={user} />} />
-                      <Route path="/payment-methods" element={<PaymentMethods user={user} />} />
-                      <Route path="/compliance" element={<Compliance user={user} />} />
-                      <Route path="/transaction/review" element={<ReviewTransaction />} />
-                      <Route path="/transaction/receipt" element={<Receipt />} />
-                      <Route path="/transactions" element={<Transactions user={user} />} />
-                      <Route path="*" element={<Navigate to={home} replace />} />
-                    </Routes>
-                  </MainLayout>
-                ) : (
-                  <Navigate to="/login" replace />
-                )
-              }
+                path="*"
+                element={
+                    <RequireAuth>
+                        <MainLayout>
+                            <Routes>
+                                <Route path="/profile" element={<Profile />} />
+                                <Route path="/overview" element={<Overview />} />
+                                <Route path="/dashboard" element={<Dashboard />} />
+                                <Route path="/beneficiaries" element={<Beneficiaries />} />
+                                <Route path="/beneficiaries/new" element={<AddBeneficiary />} />
+                                <Route path="/beneficiaries/:id/account" element={<AddAccount />} />
+                                <Route path="/payment" element={<AddPayment />} />
+                                <Route path="/payment-methods" element={<PaymentMethods />} />
+                                <Route path="/compliance" element={<Compliance />} />
+                                <Route path="/transaction/review" element={<ReviewTransaction />} />
+                                <Route path="/transaction/receipt" element={<Receipt />} />
+                                <Route path="/transactions" element={<Transactions />} />
+                                <Route path="*" element={<Navigate to={home} replace />} />
+                            </Routes>
+                        </MainLayout>
+                    </RequireAuth>
+                }
             />
-          </Routes>
-        </TransactionProvider>
-      </ToastProvider>
-    </Router>
-  );
+        </Routes>
+    );
 }
 
-export default App;
+export default function App() {
+    return (
+        <Router>
+            <SessionProvider>
+                <ToastProvider>
+                    <TransactionProvider>
+                        <AppRoutes />
+                    </TransactionProvider>
+                </ToastProvider>
+            </SessionProvider>
+        </Router>
+    );
+}

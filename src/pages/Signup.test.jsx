@@ -22,7 +22,7 @@ describe('Signup', () => {
 
   it('fills the sandbox address from the checkbox and clears it when unchecked', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<Signup onLogin={vi.fn()} />);
+    renderWithProviders(<Signup />, { session: { login: vi.fn() } });
     await user.click(screen.getByRole('checkbox', { name: /sandbox test address/i }));
     expect(screen.getByLabelText(/address line 1/i)).toHaveValue(TEST_ADDRESS.address);
     expect(screen.getByLabelText(/city/i)).toHaveValue(TEST_ADDRESS.city);
@@ -40,7 +40,7 @@ describe('Signup', () => {
     const user = userEvent.setup();
     const onLogin = vi.fn().mockResolvedValue();
     request.mockResolvedValue({ user: { id: 'u9', email: 'jane@example.com' }, token: 'jwt-9' });
-    renderWithProviders(<Signup onLogin={onLogin} />);
+    renderWithProviders(<Signup />, { session: { login: onLogin } });
     await fillRequired(user);
     await user.click(screen.getByRole('checkbox', { name: /sandbox test address/i }));
     await user.click(screen.getByRole('button', { name: /create account/i }));
@@ -55,7 +55,7 @@ describe('Signup', () => {
   it('renders the error returned by the BFF', async () => {
     const user = userEvent.setup();
     request.mockImplementation(() => Promise.reject({ error: 'UNIQUE constraint failed: users.email' }));
-    renderWithProviders(<Signup onLogin={vi.fn()} />);
+    renderWithProviders(<Signup />, { session: { login: vi.fn() } });
     await fillRequired(user);
     await user.click(screen.getByRole('button', { name: /create account/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/UNIQUE constraint failed/);
@@ -64,14 +64,14 @@ describe('Signup', () => {
   it('disables the button while submitting', async () => {
     const user = userEvent.setup();
     request.mockReturnValue(new Promise(() => {}));
-    renderWithProviders(<Signup onLogin={vi.fn()} />);
+    renderWithProviders(<Signup />, { session: { login: vi.fn() } });
     await fillRequired(user);
     await user.click(screen.getByRole('button', { name: /create account/i }));
     expect(screen.getByRole('button', { name: /create account/i })).toBeDisabled();
   });
 
   it('links back to login', () => {
-    renderWithProviders(<Signup onLogin={vi.fn()} />);
+    renderWithProviders(<Signup />, { session: { login: vi.fn() } });
     expect(screen.getByRole('link', { name: /log in/i })).toHaveAttribute('href', '/login');
   });
 });

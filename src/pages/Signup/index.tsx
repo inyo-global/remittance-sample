@@ -1,9 +1,7 @@
 import View from './view';
-import { useSignup, type SignupProps } from './model';
+import { useSignup } from './model';
 
-export type { SignupProps } from './model';
-
-export default function Signup(ownProps: SignupProps) {
-    const props = useSignup(ownProps);
+export default function Signup() {
+    const props = useSignup();
     return <View {...props} />;
 }

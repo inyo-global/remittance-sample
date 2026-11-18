@@ -1,16 +1,10 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useToast } from '../../hooks';
+import { useToast, useSession } from '../../hooks';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
 import type { Option } from '../../lib/usStates';
-import type { ProfileResponse, User } from '../../types';
-
-export interface ProfileProps {
-    user?: User | null;
-    hasProfile: boolean;
-    onSaved?: (patch: Partial<User>) => void;
-}
+import type { ProfileResponse } from '../../types';
 
 interface ProfileForm {
     firstName: string;
@@ -57,7 +51,8 @@ const EMPTY: ProfileForm = {
  * Sender onboarding. Submitting creates (or patches) the Person in Inyo through
  * the BFF, which stores the returned id as the sender's externalId.
  */
-export function useProfile({ user, hasProfile, onSaved }: ProfileProps) {
+export function useProfile() {
+    const { user, hasProfile, profileSaved } = useSession();
     const navigate = useNavigate();
     const toast = useToast();
     const [formData, setFormData] = useState<ProfileForm>(EMPTY);
@@ -106,7 +101,7 @@ export function useProfile({ user, hasProfile, onSaved }: ProfileProps) {
             await request('post', '/complete-profile', formData);
             const digits = formData.ssn.replace(/\D/g, '');
             if (digits) setFormData((prev) => ({ ...prev, ssn: '', ssnLast4: digits.slice(-4) }));
-            onSaved?.({ firstName: formData.firstName, lastName: formData.lastName, address: formData.address, city: formData.city, state: formData.state, zipcode: formData.zipcode, phoneNumber: formData.phoneNumber });
+            profileSaved({ firstName: formData.firstName, lastName: formData.lastName, address: formData.address, city: formData.city, state: formData.state, zipcode: formData.zipcode, phoneNumber: formData.phoneNumber });
             toast.success(hasProfile ? 'Profile updated' : 'Profile created', 'Your sender profile was synced with Inyo.');
             if (!hasProfile) navigate('/dashboard');
         } catch (err) {

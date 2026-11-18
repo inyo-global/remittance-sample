@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { request } from '../../api';
 import { errorMessage } from '../../lib/format';
-import { useLoad, useToast } from '../../hooks';
+import { useLoad, useToast, useSession } from '../../hooks';
 import { challengeUrl as challengeUrlOf } from '../../lib/paymentMethods';
-import type { PaymentMethod, SyncResponse, User } from '../../types';
-
-export interface PaymentMethodsProps {
-    user: User;
-}
+import type { PaymentMethod, SyncResponse } from '../../types';
 
 interface Challenge {
     method: PaymentMethod;
@@ -20,7 +16,8 @@ export const GROUPS: Array<{ type: PaymentMethod['type']; title: string }> = [
     { type: 'CARD', title: 'Debit cards' },
 ];
 
-export function usePaymentMethods({ user }: PaymentMethodsProps) {
+export function usePaymentMethods() {
+    const { user } = useSession();
     const toast = useToast();
     const load = useCallback(() => request<PaymentMethod[]>('get', '/payment-methods'), []);
     const { data: methods, setData: setMethods, loading, error } = useLoad(load, [], [user?.userId, load]);

@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CreditCard, Landmark } from 'lucide-react';
 import { request } from '../../api';
-import { useRouteState, useToast, useTransaction } from '../../hooks';
+import { useRouteState, useToast, useTransaction, useSession } from '../../hooks';
 import { inTransferFlow } from '../../lib/steps';
 import { errorMessage } from '../../lib/format';
-import type { AchCreateResponse, CardCreateResponse, PaymentMethod, SyncResponse, User } from '../../types';
+import type { AchCreateResponse, CardCreateResponse, PaymentMethod, SyncResponse } from '../../types';
 
 const TOKENIZER_SRC = 'https://cdn.simpleps.com/sandbox/inyo.js';
 // Docs (tokenizing-cards, threeDSData): "redirect" sends successUrl/failUrl and the issuer sends the
@@ -64,10 +64,6 @@ export const ADD_OPTIONS: Array<{ key: View; icon: typeof CreditCard; title: str
     { key: 'add-ach', icon: Landmark, title: 'Bank account (ACH)', text: 'Lower fees. Linked with Plaid, settles in 1 to 3 business days.', tone: 'bg-info-50 text-info-600' },
 ];
 
-export interface AddPaymentProps {
-    user: User;
-}
-
 /**
  * Step 4: choose or add a funding account.
  *  - Cards are tokenized in the browser by inyo.js, then registered via POST /fundingAccounts.
@@ -75,7 +71,8 @@ export interface AddPaymentProps {
  *    arrives through postMessage and is confirmed server-side (GET /payout/fundingAccounts/{id}).
  *  - ACH uses Plaid Link: link token from the BFF, then public_token + account_id to Inyo.
  */
-export function useAddPayment({ user }: AddPaymentProps) {
+export function useAddPayment() {
+    const { user } = useSession();
     const navigate = useNavigate();
     const routeState = useRouteState<{ forceAdd?: boolean }>();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -435,7 +432,7 @@ export function useAddPayment({ user }: AddPaymentProps) {
 
     const applyProfileAddress = (checked: boolean) => {
         setUseProfileAddress(checked);
-        setBilling(checked ? { address1: user.address || '', address2: '', city: user.city || '', state: user.state || '', zipcode: user.zipcode || '' } : EMPTY_BILLING);
+        setBilling(checked ? { address1: user?.address || '', address2: '', city: user?.city || '', state: user?.state || '', zipcode: user?.zipcode || '' } : EMPTY_BILLING);
     };
     const onBilling = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setBilling({ ...billing, [e.target.name]: e.target.value });
 
